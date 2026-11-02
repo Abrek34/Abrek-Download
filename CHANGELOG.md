@@ -9,6 +9,29 @@
   akışı otomatik bulunur, her ikisi indirilir ve ffmpeg ile tek dosyada
   birleştirilir.
 
+## 1.8.15 — 2026-11-02
+
+### Bug fixes & performans iyileştirmeleri
+
+- **`_find_matching_audio`**: Yakalamaların ses/video ayrımı `_probe_av` ile
+  kontrol edilir; ses‑only döne kadar iter. Eski kod tek URL ile döndürdü; artık
+  doğru eşleşme sağlar.
+- **`_merge_av`**: `ffmpeg -c copy` hata verirse `RuntimeError` fırlatıp
+  video‑only dosyayı geri döndürür; uygulama çökmez.
+- **`_download_one`**: `task.url` her zaman `finally` bloğu ile orijinaline geri
+  yüklenir; exception'lar URL'u bozar.
+- **`_probe_av`**: `yt-dlp` binary yol bulma mekanizması birkaç seçenekçe denenir
+  (.venv, proje kökü, PATH); daha sağlam bulunur.
+- **`_schedule_probe`**: Aynı yakalama için 24 saat içinde tekrar probe yapmayı
+  engeller; needless overhead önlenir.
+
+### Minor
+
+- `_probe_av` çıktısından son satır JSON parse'i yapılır (yt-dlp bazen birden
+  fazla satır çıktı verir).
+- `_find_matching_audio` hiçbiri sesli değilse None döner; calling code bunu
+  normal indirme yolunaiter.
+
 ## 1.8.12 — 2026-11-02
 
 ### Düzeltmeler
