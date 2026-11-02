@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import tkinter as tk
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -712,6 +713,32 @@ class VideoAvciApp(tk.Tk):
             open_in_file_manager(target)
         except Exception as exc:
             self.toast(f"Klasör açılamadı: {exc}", "error")
+
+    def extract_audio(self, task_id: str) -> None:
+        task = self.manager.get_task(task_id)
+        if task is None or not task.filepath or not Path(task.filepath).exists():
+            self.toast("Dosya bulunamadı.", "warning")
+            return
+        src = Path(task.filepath)
+        dst = src.with_suffix(".mp3")
+        if dst.exists():
+            self.toast("MP3 zaten var.", "info")
+            return
+        self.toast("Ses çıkarılıyor…", "info")
+
+        def worker():
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", str(src), "-vn", "-acodec", "libmp3lame", "-q:a", "2", str(dst)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                )
+                self.post(lambda: self.toast(f"MP3 oluşturuldu: {dst.name}", "success"))
+            except Exception as exc:
+                self.post(lambda: self.toast(f"Ses çıkarılamadı: {exc}", "error"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def show_task_details(self, task_id: str) -> None:
         task = self.manager.get_task(task_id)

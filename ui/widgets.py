@@ -331,6 +331,7 @@ class TaskCard(tk.Frame):
             if has_file:
                 actions.append(("Oynat", "open", "primary"))
                 actions.append(("Klasör", "folder", "ghost"))
+                actions.append(("Sesi çıkar", "audio", "ghost"))
             actions.append(("Yeniden indir", "redownload", "ghost"))
             actions.append(("Kaldır", "remove", "ghost"))
 
@@ -364,6 +365,8 @@ class TaskCard(tk.Frame):
             self.app.open_task_folder(task_id)
         elif action == "redownload":
             self.app.redownload_task(task_id)
+        elif action == "audio":
+            self.app.extract_audio(task_id)
         elif action == "details":
             self.app.show_task_details(task_id)
 
