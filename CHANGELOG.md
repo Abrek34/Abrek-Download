@@ -1,5 +1,13 @@
 # Sürüm Notları
 
+## 1.8.8 — 2026-11-02
+
+### Düzeltmeler
+
+- **İndir düğmesi kayboluyordu:** eklenti yeniden yüklendiğinde DOM'daki eski
+  işaretleyici kalıyor ve buton enjekte edilmiyordu. Buton eksikse yeniden
+  saracak şekilde düzeltildi.
+
 ## 1.8.7 — 2026-11-02
 
 ### Düzeltmeler

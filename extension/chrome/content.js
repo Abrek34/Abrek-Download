@@ -200,12 +200,21 @@
   }
 
   function wrapVideo(video) {
-    if (video.dataset.vaWrapped) return;
+    // Geçici eklenti yeniden yüklendiğinde DOM'daki eski işaretleyici kalabilir;
+    // buton kayıpsa yeniden sar.
+    if (video.dataset.vaWrapped === '1') {
+      const parent = video.closest('#movie_player') || video.parentElement;
+      if (parent && parent.querySelector('.va-dl-btn')) return;
+    }
     video.dataset.vaWrapped = '1';
     let parent = video.closest('#movie_player') || video.parentElement;
     if (!parent) return;
-    const pos = getComputedStyle(parent).position;
-    if (pos === 'static') parent.style.position = 'relative';
+    try {
+      const pos = getComputedStyle(parent).position;
+      if (pos === 'static') parent.style.position = 'relative';
+    } catch {
+      parent.style.position = 'relative';
+    }
 
     const btn = document.createElement('button');
     btn.className = 'va-dl-btn';
