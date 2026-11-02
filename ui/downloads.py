@@ -181,7 +181,8 @@ class DownloadsPage(tk.Frame):
         make_button(actions, t("downloads.pause_all"), self.pause_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
         make_button(actions, t("downloads.resume_all"), self.resume_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
         make_button(actions, t("downloads.retry_failed"), self.retry_failed, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
-        make_button(actions, t("downloads.clear_finished"), self.clear_finished, kind="ghost", size=8, bg=BG).pack(side="left")
+        make_button(actions, t("downloads.clear_finished"), self.clear_finished, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
+        make_button(actions, t("downloads.clear_all"), self.clear_all, kind="danger", size=8, bg=BG).pack(side="left")
 
         self._paint_filters()
 
@@ -319,6 +320,17 @@ class DownloadsPage(tk.Frame):
         ):
             return
         self.app.manager.clear_finished()
+        self.app.refresh_now()
+
+    def clear_all(self) -> None:
+        if not messagebox.askyesno(
+            t("downloads.confirm_clear_all_title"),
+            t("downloads.confirm_clear_all_message"),
+            parent=self,
+        ):
+            return
+        self.app.manager.clear_queue()
+        self.app.toast(t("downloads.toast.cleared_all"), "info")
         self.app.refresh_now()
 
     def focus_url(self) -> None:

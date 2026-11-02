@@ -773,6 +773,31 @@ class DownloadManager:
             self.tasks = keep
             self._save_locked()
 
+    def clear_queue(self) -> int:
+        """Tüm indirme görevlerini (aktif olanlar dahil) listeden kaldırır."""
+        with self.lock:
+            active_ids = [tid for tid, task in self.tasks.items() if task.status in ACTIVE_STATUSES]
+            for task_id in active_ids:
+                self.cancel_requested.add(task_id)
+                controller = self.controllers.get(task_id)
+                if controller is not None:
+                    try:
+                        controller.cancel()
+                    except Exception:
+                        pass
+            removed = len(self.tasks)
+            for task_id in list(self.tasks.keys()):
+                self._cleanup_parts(task_id)
+            self.tasks.clear()
+            self.active_ids.clear()
+            self.controllers.clear()
+            self.pause_requested.clear()
+            self.cancel_requested.clear()
+            self._finish_action_done = False
+            self._save_locked()
+            self._wake.set()
+        return removed
+
     def pause_all(self) -> None:
         with self.lock:
             ids = [task.id for task in self.tasks.values() if task.status in ACTIVE_STATUSES or task.status == "queued"]

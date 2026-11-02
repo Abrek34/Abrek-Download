@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.2 — 2026-11-02
+
+### Yeni özellikler
+
+- **Kuyruğu toplu temizleme:** İndirilenler sayfasına "Tümünü temizle" düğmesi
+  eklendi. Onay sonrası tüm görevler (aktif olanlar dahil) listeden kaldırılır;
+  indirilen dosyalar silinmez. Yanlışlıkla "tümünü indir" yapıldığında oluşan
+  yüzlerce görevi tek tıkla temizlemeyi sağlar.
+
 ## 1.8.1 — 2026-11-02
 
 ### Düzeltmeler
