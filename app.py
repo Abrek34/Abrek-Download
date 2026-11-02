@@ -149,7 +149,13 @@ class VideoAvciApp(tk.Tk):
 
         self.title(t("app.title"))
         self.configure(bg=BG)
-        self.minsize(1020, 660)
+        self.minsize(980, 620)
+        try:
+            dpi = float(self.winfo_fpixels("1i"))
+            if dpi >= 120:
+                self.tk.call("tk", "scaling", max(1.0, dpi / 72.0))
+        except Exception:
+            pass
         self._set_initial_geometry()
         self._load_icon()
         setup_style(self)
@@ -174,7 +180,7 @@ class VideoAvciApp(tk.Tk):
             self.geometry(geometry)
             return
         self.update_idletasks()
-        width, height = 1240, 820
+        width, height = 1200, 780
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
         x = max(0, (screen_w - width) // 2)
@@ -281,7 +287,7 @@ class VideoAvciApp(tk.Tk):
         )
 
     def _build_sidebar(self) -> None:
-        sidebar = tk.Frame(self, bg=SIDEBAR, width=226)
+        sidebar = tk.Frame(self, bg=SIDEBAR, width=260)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
         self.sidebar = sidebar
@@ -291,14 +297,21 @@ class VideoAvciApp(tk.Tk):
 
         brand = tk.Frame(inner, bg=SIDEBAR)
         brand.pack(fill="x", padx=4)
-        logo = tk.Canvas(brand, width=42, height=42, bg=SIDEBAR, highlightthickness=0, bd=0)
-        logo.pack(side="left")
-        rounded_rect(logo, 0, 0, 42, 42, 13, fill=ACCENT, outline="")
-        logo.create_polygon(17, 12, 17, 30, 31, 21, fill="#0b1020", outline="")
+        try:
+            icon_image = tk.PhotoImage(file=str(PROJECT_DIR / "assets" / "icon-256.png"))
+            # 256x256 -> ~42x42
+            icon_image = icon_image.subsample(6, 6)
+            self._sidebar_icon = icon_image
+            logo = tk.Label(brand, image=icon_image, bg=SIDEBAR, bd=0)
+            logo.pack(side="left")
+        except Exception:
+            logo = tk.Canvas(brand, width=42, height=42, bg=SIDEBAR, highlightthickness=0, bd=0)
+            logo.pack(side="left")
+            rounded_rect(logo, 0, 0, 42, 42, 13, fill=ACCENT, outline="")
         brand_text = tk.Frame(brand, bg=SIDEBAR)
-        brand_text.pack(side="left", padx=(11, 0))
-        tk.Label(brand_text, text=APP_NAME, bg=SIDEBAR, fg=TEXT, font=font(16, "bold"), anchor="w").pack(fill="x")
-        tk.Label(brand_text, text=t("app.subtitle"), bg=SIDEBAR, fg=MUTED, font=font(8), anchor="w").pack(fill="x")
+        brand_text.pack(side="left", padx=(11, 0), fill="x", expand=True)
+        tk.Label(brand_text, text=APP_NAME, bg=SIDEBAR, fg=TEXT, font=font(14, "bold"), anchor="w", wraplength=170).pack(fill="x")
+        tk.Label(brand_text, text=t("app.subtitle"), bg=SIDEBAR, fg=MUTED, font=font(8), anchor="w", wraplength=170).pack(fill="x")
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=(20, 16), padx=4)
         tk.Label(

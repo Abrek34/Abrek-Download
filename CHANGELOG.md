@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.4 — 2026-11-02
+
+### Düzeltmeler
+
+- **Arayüz iyileştirmeleri:** sol üstteki play üçgeni yerine program simgesi
+  kullanılıyor; "Abrek Download" başlığının yarım görünmesi (sidebar genişliği
+  ve metin sarma) düzeltildi; yüksek DPI ekranlarda yazı ölçeği otomatik
+  ayarlanıyor; pencere varsayılan/min boyutları iyileştirildi.
+
 ## 1.8.3 — 2026-11-02
 
 ### Yeni özellikler
