@@ -334,7 +334,26 @@ class DownloadManager:
             raise ValueError("Geçerli bir medya bağlantısı yok.")
         if capture.page_url and not is_http_url(capture.page_url):
             capture.page_url = ""
+        page_url_norm = (capture.page_url or "").lower()
+        # Instagram tekil medya sayfalarında (Reels/gönderi) onlarca varyant
+        # isteği yakalanır. Aynı sayfa için daha önce yakalama varsa yenisini
+        # ekleme; böylece "Yakalananlar" listesi aynı sayfa ile dolmaz.
+        is_instagram_single = (
+            "instagram.com" in page_url_norm
+            and ("/reels/" in page_url_norm or "/reel/" in page_url_norm or "/p/" in page_url_norm)
+        )
         with self.lock:
+            if is_instagram_single:
+                for existing in self.captures:
+                    if existing.page_url == capture.page_url:
+                        if capture.title and not existing.title:
+                            existing.title = capture.title
+                        if capture.page_title and not existing.page_title:
+                            existing.page_title = capture.page_title
+                        if capture.size and not existing.size:
+                            existing.size = capture.size
+                        self._save_locked()
+                        return existing, True
             for existing in self.captures:
                 if existing.url == capture.url:
                     # Daha iyi başlık/boyut bilgisi geldiyse güncelle.

@@ -1,5 +1,17 @@
 # Sürüm Notları
 
+## 1.8.1 — 2026-11-02
+
+### Düzeltmeler
+
+- **Instagram Reels yakalama taşması:** tek bir Reels sayfasında onlarca
+  varyant/prefetch medya isteği yakalanıp "Yakalananlar" listesini dolduruyordu.
+  Arka plan artık aynı Instagram tekil medya sayfası için ikinci yakalamayı
+  engelliyor; prefetch istekleri ve küçük yanıtlar eleniyor. İçerik betiği
+  Instagram'da performance kayıtlarını taramıyor ve sayfa değişince yerel
+  "görüldü" listesini sıfırlıyor. Uygulama tarafında da aynı sayfa için
+  yinelenen yakalama engellendi.
+
 ## 1.8.0 — 2026-11-01
 
 ### Yeni özellikler

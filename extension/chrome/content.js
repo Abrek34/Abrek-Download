@@ -11,7 +11,9 @@
   const MEDIA = /\.(mp4|webm|mkv|mov|m4v|m3u8|mpd|mp3|m4a|aac|ogg|opus)(?:$|[?#])/i;
   const seen = new Set();
   let lastPage = '';
+  let lastHref = location.href;
   let timer = null;
+  const isInstagram = /(^|\\.)instagram\\.com$/i.test(location.hostname);
 
   function send(message) {
     try {
@@ -44,14 +46,20 @@
         if (MEDIA.test(value)) urls.add(value);
       }
     }
-    try {
-      for (const entry of performance.getEntriesByType('resource')) {
-        if (entry && entry.name && /^https?:/i.test(entry.name) && MEDIA.test(entry.name)) {
-          urls.add(entry.name);
+    // Instagram'da performance kayıtları onlarca varyant/prefetch medya URL'si
+    // içerir ve "Yakalananlar" listesini doldurur. Burada yalnızca DOM'daki
+    // <video> kaynaklarını kullanıyoruz; ağ istekleri arka plan tarafından
+    // ayrıca filtrelenir.
+    if (!isInstagram) {
+      try {
+        for (const entry of performance.getEntriesByType('resource')) {
+          if (entry && entry.name && /^https?:/i.test(entry.name) && MEDIA.test(entry.name)) {
+            urls.add(entry.name);
+          }
         }
+      } catch {
+        // performance API kısıtlı olabilir.
       }
-    } catch {
-      // performance API kısıtlı olabilir.
     }
 
     const fresh = [...urls].filter((url) => !seen.has(url));
@@ -80,7 +88,13 @@
     // Belge henüz hazır değilse sessizce geç.
   }
 
-  setInterval(collect, 10000);
+  setInterval(() => {
+    if (location.href !== lastHref) {
+      seen.clear();
+      lastHref = location.href;
+    }
+    collect();
+  }, 10000);
 
   // ------------------------------------------------------------------ video üstü indir düğmesi
   const MENU_ID = 'va-dl-menu';

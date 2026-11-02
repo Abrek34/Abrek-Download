@@ -348,6 +348,14 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
     if (size > 0 && size < MIN_DIRECT_SIZE) return;
   }
 
+  // Instagram tek bir Reels sayfasında onlarca varyant/prefetch medya isteği
+  // üretir. Aynı sayfa için daha önce yakalama varsa yenilerini ekleme; böylece
+  // "Yakalananlar" listesi onlarca aynı sayfa girdisiyle dolmaz.
+  const pageUrlNorm = String(pageUrl || '').toLowerCase();
+  const isInstagramSingleMedia =
+    /(^|\.)instagram\.com$/.test(new URL(pageUrl || 'http://x').hostname.replace(/^www\./, '')) &&
+    (/\/reels?\//.test(pageUrlNorm) || /\/p\//.test(pageUrlNorm));
+
   const info = await getTabInfo(tabId, initiator);
   const pageUrl = info.pageUrl || initiator || '';
   const pageTitle = info.pageTitle || '';
@@ -366,6 +374,7 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
   };
 
   let autoSend = true;
+  let skipCapture = false;
   await withLock(`tab:${tabId}`, async () => {
     const record = await readTab(tabId);
     if (record.pageUrl && pageUrl && record.pageUrl !== pageUrl) {
@@ -385,6 +394,11 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
       }
       autoSend = !existing.sent;
     } else {
+      // Instagram tekil medya sayfalarında aynı sayfa için ikinci yakalamayı engelle.
+      if (isInstagramSingleMedia && record.items.some((entry) => entry.pageUrl === pageUrl)) {
+        skipCapture = true;
+        return;
+      }
       record.items.unshift(item);
       record.items = record.items.slice(0, MAX_ITEMS_PER_TAB);
     }
@@ -393,6 +407,8 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
     const settings = await readSettings();
     autoSend = autoSend && settings.autoSend !== false;
   });
+
+  if (skipCapture) return;
 
   if (autoSend) {
     try {
@@ -416,6 +432,9 @@ function headerValue(headers, name) {
 ext.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.tabId < 0) return;
+    const requestHeaders = details.requestHeaders || [];
+    const purpose = headerValue(requestHeaders, 'sec-purpose') || headerValue(requestHeaders, 'purpose');
+    if (/prefetch/i.test(purpose)) return;
     const isManifest = MANIFEST_EXT.test(details.url);
     if (!isManifest && details.type !== 'media') return;
     handleDetection(
@@ -429,6 +448,7 @@ ext.webRequest.onBeforeRequest.addListener(
     ).catch(() => {});
   },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
+  ['requestHeaders'],
 );
 
 ext.webRequest.onHeadersReceived.addListener(
@@ -439,6 +459,9 @@ ext.webRequest.onHeadersReceived.addListener(
     const contentRange = headerValue(headers, 'content-range');
     const size = parseInt(headerValue(headers, 'content-length'), 10) || 0;
     if (contentRange) return;
+    const purpose = headerValue(headers, 'sec-purpose') || headerValue(headers, 'purpose') || headerValue(headers, 'x-purpose');
+    if (/prefetch/i.test(purpose)) return;
+    if (size > 0 && size < MIN_DIRECT_SIZE && !MANIFEST_EXT.test(details.url)) return;
     if (!contentType && !MEDIA_EXT.test(details.url) && !MANIFEST_EXT.test(details.url)) return;
     if (contentType.includes('text/html') || contentType.includes('application/xhtml')) return;
     handleDetection(
