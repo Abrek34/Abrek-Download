@@ -996,7 +996,9 @@ class DownloadManager:
         return audio, video
 
     def _find_matching_audio(self, task: "DownloadTask") -> str:
-        """Aynı sayfa için ses-only HLS yakalaması varsa URL'sini döner."""
+        """Aynı sayfa için farklı bir HLS yakalaması varsa URL'sini döner.
+        Ses/görüntü ayrımı yt-dlp tarafından reliable olmayan için, sayfa URL'si
+        ve URL farklılığıyla eşleşen başka bir hls yakalama varsayılır complementer."""
         if not task.page_url:
             return ""
         with self.lock:
@@ -1004,10 +1006,9 @@ class DownloadManager:
                 c for c in self.captures
                 if c.page_url == task.page_url and c.kind in ("hls", "dash") and c.url != task.url
             ]
-        for cap in candidates:
-            audio, video = self._probe_av(cap.url)
-            if audio and not video:
-                return cap.url
+        # En az bir eşleşme varsa onu döndür (varsa kullanıcıya gösterilebilir).
+        if candidates:
+            return candidates[0].url
         return ""
 
     def _download_one(self, task: "DownloadTask", url: str, task_id: str) -> str:
@@ -1069,16 +1070,16 @@ class DownloadManager:
             log.info("Görev başlıyor: %s mod=%s", task_id, mode)
 
             # Ses+görüntü birleştirme: video-only HLS için aynı sayfadaki
-            # audio-only HLS yakalamasını bul ve tek dosyada birleştir.
+            # başka bir HLS yakalamasını bul ve tek dosyada birleştir.
+            # yt-dlp audio_ext/video_ext reliably ayrılamadığı için, sayfa URL'si
+            # ve URL farklılığıyla eşleşen başka bir hls yakalama yeterli.
             if mode != "direct" and task.kind in ("hls", "dash") and not task.audio_url:
                 try:
-                    has_audio, has_video = self._probe_av(task.url)
-                    if has_video and not has_audio:
-                        audio_url = self._find_matching_audio(task)
-                        if audio_url:
-                            task.audio_url = audio_url
-                            self._save_locked()
-                            log.info("Eşleşen ses akışı bulundu: %s", audio_url[:80])
+                    audio_url = self._find_matching_audio(task)
+                    if audio_url:
+                        task.audio_url = audio_url
+                        self._save_locked()
+                        log.info("Eşleşen akış bulunamış; tamamlanacak dosya birleştirilecek.")
                 except Exception:
                     pass
 
