@@ -1064,24 +1064,37 @@ class DownloadManager:
             task.url = orig_url
 
     def _merge_av(self, video_path: str, audio_path: str) -> str:
-        """ffmpeg ile video+audi birleştir; başarısız olursa video‑only döndürür."""
+        """ffmpeg ile video+audi birleştir; metadata (şarkı/album/etc.) temizlenerek
+        site linklerinin dosyaya takılı önlenir. Başarısız olursa video‑only döndürür."""
         import shutil as _shutil
         from pathlib import Path as _Path
         import subprocess as _sub
         video_p = _Path(video_path)
         audio_p = _Path(audio_path)
+        # İlk birleştirme (copy modu)
         out = video_p.with_name(video_p.stem + "_merged.mp4")
         try:
             cmd = ["ffmpeg", "-y", "-i", str(video_p), "-i", str(audio_p), "-c", "copy", str(out)]
             _sub.run(cmd, check=True, capture_output=True)
         except _sub.CalledProcessError:
-            # copy modu başarısızsa (nadir); orijinal videoyi geri döndürüp hata ver.
+            # copy modu başarısızsa (nadir); orijinal videoyu geri döndürüp hata ver.
             try:
                 video_p.unlink(missing_ok=True)
             except Exception:
                 pass
             raise RuntimeError("FFmpeg merge failed; returning video‑only file.")
-        # Temizlik: orijinal video ve ses dosyalarını sil.
+        # ---------- Metadata temizleme ----------
+        # Dosya içindeki tüm ID3/etiket/bilgi temizlenir; site linkleri,
+        # affiliate parametreler veya eski etiketler dosyaya takılıp kalmaz.
+        out_clean = video_p.with_name(video_p.stem + ".mp4")
+        cmd2 = ["ffmpeg", "-y", "-i", str(out), "-map_metadata", "-1", "-c", "copy", str(out_clean)]
+        _sub.run(cmd2, check=True, capture_output=True)
+        # Orijinal geçici birleştirme dosyasını sil
+        try:
+            out.unlink(missing_ok=True)
+        except Exception:
+            pass
+        # Orijinal video ve ses dosyalarını sil
         try:
             video_p.unlink(missing_ok=True)
         except Exception:
@@ -1090,7 +1103,7 @@ class DownloadManager:
             audio_p.unlink(missing_ok=True)
         except Exception:
             pass
-        return str(out)
+        return str(out_clean)
 
     def _run_task(self, task_id: str) -> None:
         downloader = None
