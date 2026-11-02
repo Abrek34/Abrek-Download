@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.10 — 2026-11-02
+
+### Düzeltmeler
+
+- **Film sitelerinde ⬇ tıklayınca "yakalanamadı":** sayfa yakalaması yalnızca
+  ilk yüklemede tetikleniyordu; video sonradan yüklendiğinde yakalama
+  eklenmiyordu. Şimdi video elementi göründüğünde sayfa yakalaması yeniden
+  tetiklenir; iframe içindeki oynatıcılar da üst sayfa URL'si ile yakalanır.
+
 ## 1.8.9 — 2026-11-02
 
 ### Yeni özellikler

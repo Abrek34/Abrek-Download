@@ -548,21 +548,24 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'page-info' && tabId >= 0 && sender.frameId === 0) {
+  if (message.type === 'page-info' && tabId >= 0) {
+    const topUrl = (tab && tab.url) || message.pageUrl || '';
     withLock(`tab:${tabId}`, async () => {
       const record = await readTab(tabId);
-      if (record.pageUrl && message.pageUrl && record.pageUrl !== message.pageUrl) {
+      if (record.pageUrl && topUrl && record.pageUrl !== topUrl) {
         record.items = [];
       }
-      record.pageUrl = message.pageUrl || tab.url || record.pageUrl;
-      record.pageTitle = message.pageTitle || tab.title || record.pageTitle;
+      if (topUrl) record.pageUrl = topUrl;
+      if (message.pageTitle || (tab && tab.title)) {
+        record.pageTitle = message.pageTitle || tab.title || record.pageTitle;
+      }
       await writeTab(tabId, record);
       await setBadge(tabId, record.items.length);
     })
       .then(() => {
         checkAndAddVideoPage(
           tabId,
-          message.pageUrl || (tab && tab.url) || '',
+          topUrl,
           message.pageTitle || (tab && tab.title) || '',
           !!message.hasVideo,
         ).catch(() => {});

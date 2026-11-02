@@ -12,6 +12,7 @@
   const seen = new Set();
   let lastPage = '';
   let lastHref = location.href;
+  let pageInfoSent = false;
   let timer = null;
   const isInstagram = /(^|\\.)instagram\\.com$/i.test(location.hostname);
 
@@ -66,14 +67,26 @@
     for (const url of fresh) seen.add(url);
     if (fresh.length) send({ type: 'dom-media', urls: fresh });
 
+    const hasVideo = !!document.querySelector('video');
     const pageKey = location.href + '\n' + document.title;
-    if (pageKey !== lastPage) {
+    const pageChanged = pageKey !== lastPage;
+    if (pageChanged) {
       lastPage = pageKey;
+      pageInfoSent = false;
       send({
         type: 'page-info',
         pageUrl: location.href,
         pageTitle: document.title,
-        hasVideo: !!document.querySelector('video'),
+        hasVideo: hasVideo,
+      });
+    }
+    if (hasVideo && !pageInfoSent) {
+      pageInfoSent = true;
+      send({
+        type: 'page-info',
+        pageUrl: location.href,
+        pageTitle: document.title,
+        hasVideo: true,
       });
     }
   }
@@ -96,6 +109,8 @@
   setInterval(() => {
     if (location.href !== lastHref) {
       seen.clear();
+      pageInfoSent = false;
+      lastPage = '';
       lastHref = location.href;
     }
     collect();
@@ -260,6 +275,8 @@
   // YouTube ve SPA sayfa geçişleri dinleyicisi
   window.addEventListener('yt-navigate-finish', () => {
     seen.clear();
+    pageInfoSent = false;
+    lastPage = '';
     setTimeout(() => {
       collect();
       scanVideos();
@@ -267,6 +284,8 @@
   });
   window.addEventListener('popstate', () => {
     seen.clear();
+    pageInfoSent = false;
+    lastPage = '';
     setTimeout(() => {
       collect();
       scanVideos();
