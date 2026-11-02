@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Abrek Download</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icon48.png" alt="" class="brand-icon">
+      <div>
+        <h1>Abrek Download</h1>
+        <span class="sub">video yakalayıcı</span>
+      </div>
+    </div>
+    <div id="status" class="status checking">
+      <span class="dot"></span>
+      <span id="statusText">Bağlanıyor…</span>
+    </div>
+  </header>
+
+  <section class="page-card">
+    <div class="eyebrow">AKTİF SAYFA</div>
+    <div id="pageTitle" class="page-title">Yükleniyor…</div>
+    <div id="pageUrl" class="page-url"></div>
+    <div class="page-actions">
+      <select id="quality" title="İndirme kalitesi">
+        <option value="best">En iyi kalite</option>
+        <option value="1080">1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+        <option value="audio">Ses (MP3)</option>
+      </select>
+      <button id="downloadPage" class="primary" type="button">Bu sayfayı indir</button>
+    </div>
+  </section>
+
+  <div class="list-head">
+    <span>Yakalanan videolar <b id="count">0</b></span>
+    <button id="clear" class="link" type="button">Temizle</button>
+  </div>
+
+  <main id="list"></main>
+
+  <div id="empty" class="empty">
+    <div class="empty-icon">▶</div>
+    <p>Bu sekmede henüz video yakalanmadı.</p>
+    <span>Videoyu oynatın; ağdan gelen medya burada görünecek.</span>
+  </div>
+
+  <footer>
+    <label class="toggle">
+      <input type="checkbox" id="autoSend">
+      <span>Otomatik gönder</span>
+    </label>
+    <button id="sendAll" class="secondary" type="button">Tümünü gönder</button>
+  </footer>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+"""İndirme görevleri ve yakalanan medya veri modelleri."""
+
+from __future__ import annotations
+
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+from .utils import AUDIO_EXTENSIONS, MEDIA_EXTENSIONS, hostname, now, url_extension
+
+ACTIVE_STATUSES = {"starting", "analyzing", "downloading", "processing", "pausing", "canceling"}
+FINISHED_STATUSES = {"completed", "error", "canceled"}
+
+STATUS_LABELS = {
+    "queued": "Sırada",
+    "starting": "Başlatılıyor",
+    "analyzing": "Analiz ediliyor",
+    "downloading": "İndiriliyor",
+    "processing": "İşleniyor",
+    "pausing": "Duraklatılıyor",
+    "canceling": "İptal ediliyor",
+    "paused": "Duraklatıldı",
+    "completed": "Tamamlandı",
+    "error": "Hata",
+    "canceled": "İptal edildi",
+}
+
+QUALITY_LABELS = {
+    "best": "En iyi kalite",
+    "2160": "2160p (4K)",
+    "1440": "1440p (2K)",
+    "1080": "1080p",
+    "720": "720p",
+    "480": "480p",
+    "audio": "Sadece ses (MP3)",
+}
+
+
+@dataclass
+class DownloadTask:
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    url: str = ""
+    title: str = ""
+    page_url: str = ""
+    kind: str = "auto"  # auto | page | direct | hls | dash
+    quality: str = "best"
+    status: str = "queued"
+    progress: float = 0.0
+    speed: float = 0.0
+    eta: int = 0
+    downloaded: int = 0
+    total: int = 0
+    error: str = ""
+    filepath: str = ""
+    extractor: str = ""
+    duration: int = 0
+    thumbnail: str = ""
+    format_note: str = ""
+    referer: str = ""
+    created_at: float = field(default_factory=now)
+    updated_at: float = field(default_factory=now)
+    auto_resume: bool = True
+    connections: int = 0
+    analyzed: bool = False
+    log_tail: str = ""
+    detail: str = ""
+
+    def display_title(self) -> str:
+        if self.title:
+            return self.title
+        if self.url:
+            path = self.url.split("?", 1)[0].rstrip("/").split("/")[-1]
+            return path or hostname(self.url) or "Video"
+        return "Video"
+
+    def host(self) -> str:
+        return hostname(self.page_url or self.url)
+
+    def status_label(self) -> str:
+        if self.status == "error" and self.error:
+            return "Hata"
+        return STATUS_LABELS.get(self.status, self.status)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DownloadTask":
+        allowed = set(cls.__dataclass_fields__.keys())
+        clean = {key: value for key, value in (data or {}).items() if key in allowed}
+        task = cls(**clean)
+        if not task.id:
+            task.id = uuid.uuid4().hex[:12]
+        return task
+
+    def snapshot(self) -> dict[str, Any]:
+        data = self.to_dict()
+        data["display_title"] = self.display_title()
+        data["host"] = self.host()
+        data["status_label"] = self.status_label()
+        data["quality_label"] = QUALITY_LABELS.get(self.quality, self.quality)
+        return data
+
+
+@dataclass
+class Capture:
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    url: str = ""
+    page_url: str = ""
+    page_title: str = ""
+    title: str = ""
+    content_type: str = ""
+    size: int = 0
+    kind: str = "direct"  # direct | hls | dash | page
+    media_kind: str = ""  # audio | video | av | manifest | ""
+    media_info: str = ""  # çözünürlük/bitrate gibi ek bilgi
+    referer: str = ""
+    tab_id: int = -1
+    created_at: float = field(default_factory=now)
+
+    def display_title(self) -> str:
+        if self.title:
+            return self.title
+        if self.page_title:
+            return self.page_title
+        if self.url:
+            name = self.url.split("?", 1)[0].rstrip("/").split("/")[-1]
+            return name or "Video"
+        return "Video"
+
+    def host(self) -> str:
+        return hostname(self.page_url or self.url)
+
+    def kind_label(self) -> str:
+        return {
+            "hls": "HLS",
+            "dash": "DASH",
+            "page": "SAYFA",
+            "direct": "MEDYA",
+        }.get(self.kind, "MEDYA")
+
+    def media_label(self) -> str:
+        kind = self.media_kind or self._guess_media_kind()
+        info = (self.media_info or "").strip()
+        if kind == "manifest":
+            if info:
+                return f"AKIŞ {info}"
+            return "AKIŞ"
+        if kind == "audio":
+            return "SES (sadece)"
+        if kind == "video":
+            if info:
+                return f"GÖRÜNTÜ {info}"
+            return "GÖRÜNTÜ"
+        if kind == "av":
+            if info:
+                return f"SES + GÖRÜNTÜ {info}"
+            return "SES + GÖRÜNTÜ"
+        return "MEDYA"
+
+    def _guess_media_kind(self) -> str:
+        if self.kind in {"hls", "dash"}:
+            return "manifest"
+        ct = (self.content_type or "").lower()
+        ext = url_extension(self.url)
+        if ct.startswith("audio/") or ext in AUDIO_EXTENSIONS:
+            return "audio"
+        if ct.startswith("video/") or ext in MEDIA_EXTENSIONS:
+            return "video"
+        return ""
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["display_title"] = self.display_title()
+        data["host"] = self.host()
+        data["kind_label"] = self.kind_label()
+        data["media_label"] = self.media_label()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Capture":
+        allowed = set(cls.__dataclass_fields__.keys())
+        clean = {key: value for key, value in (data or {}).items() if key in allowed}
+        capture = cls(**clean)
+        if not capture.id:
+            capture.id = uuid.uuid4().hex[:12]
+        return capture
+
+
+def make_capture(payload: dict[str, Any]) -> Capture:
+    capture = Capture(
+        url=str(payload.get("url") or "").strip(),
+        page_url=str(payload.get("page_url") or payload.get("pageUrl") or "").strip(),
+        page_title=str(payload.get("page_title") or payload.get("pageTitle") or "").strip(),
+        title=str(payload.get("title") or "").strip(),
+        content_type=str(payload.get("content_type") or payload.get("contentType") or "").strip(),
+        size=int(payload.get("size") or 0),
+        kind=str(payload.get("kind") or "direct").strip().lower(),
+        media_kind="",
+        referer=str(payload.get("referer") or "").strip(),
+        tab_id=int(payload.get("tab_id") or payload.get("tabId") or -1),
+    )
+    if capture.kind not in {"direct", "hls", "dash", "page"}:
+        capture.kind = "direct"
+    capture.media_kind = capture._guess_media_kind()
+    if not capture.title:
+        capture.title = capture.page_title
+    if not capture.referer:
+        capture.referer = capture.page_url
+    return capture

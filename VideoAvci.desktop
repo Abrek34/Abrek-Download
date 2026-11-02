@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Abrek Download
+GenericName=Video İndirici
+Comment=Tarayıcı eklentisiyle yakaladığınız videoları indirin
+Exec="/home/bbbb/Masaüstü/VideoAvci/baslat.sh"
+Icon=/home/bbbb/Masaüstü/VideoAvci/assets/icon.png
+Terminal=false
+Categories=AudioVideo;FileTransfer;
+Keywords=video;indir;indirme;download;yt-dlp;yakala;abrek;
+StartupNotify=true
+StartupWMClass=Abrekdownload
+X-GNOME-UsesNotifications=true
