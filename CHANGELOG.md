@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.13 — 2026-11-02
+
+### Yeni özellikler
+
+- **Ses + görüntü birleştirme:** film sitelerinde (vidmixi vb.) video-only ve
+  audio-only HLS akışları ayrı yakalanıyordu; indirme sırasında eşleşen ses
+  akışı otomatik bulunur, her ikisi indirilir ve ffmpeg ile tek dosyada
+  birleştirilir.
+
 ## 1.8.12 — 2026-11-02
 
 ### Düzeltmeler

@@ -73,6 +73,7 @@ def quality_label(quality: str) -> str:
 class DownloadTask:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     url: str = ""
+    audio_url: str = ""
     title: str = ""
     page_url: str = ""
     kind: str = "auto"  # auto | page | direct | hls | dash

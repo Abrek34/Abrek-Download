@@ -947,6 +947,110 @@ class DownloadManager:
 
         return callback
 
+    def _probe_av(self, url: str) -> tuple[bool, bool]:
+        """URL'nin ses ve görüntü içerip içermediğini yt-dlp ile hızlıca sınar."""
+        try:
+            import json as _json
+            import subprocess as _sp
+            cmd = [sys.executable and "yt-dlp" or "yt-dlp"]
+        except Exception:
+            cmd = ["yt-dlp"]
+        # yt-dlp binary'sini .venv içinden bul.
+        ytdlp_bin = str(Path(self.config.download_dir).parent / "bin" / "yt-dlp")
+        # Fallback: PATH'teki yt-dlp.
+        import shutil as _shutil
+        if not Path(ytdlp_bin).exists():
+            ytdlp_bin = _shutil.which("yt-dlp") or "yt-dlp"
+        # Proje .venv içindeki yt-dlp'yi tercih et.
+        venv_ytdlp = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "yt-dlp"
+        if venv_ytdlp.exists():
+            ytdlp_bin = str(venv_ytdlp)
+        try:
+            result = subprocess.run(
+                [ytdlp_bin, "--dump-single-json", "--no-playlist", "--no-warnings", url],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
+        except Exception:
+            return False, False
+        if result.returncode != 0 or not result.stdout:
+            return False, False
+        try:
+            info = _json.loads(result.stdout.strip().splitlines()[-1])
+        except Exception:
+            try:
+                info = _json.loads(result.stdout.strip())
+            except Exception:
+                return False, False
+        audio = str(info.get("audio_ext") or "").lower() not in ("", "none")
+        video = str(info.get("video_ext") or "").lower() not in ("", "none")
+        # audio_ext/video_ext yoksa formatlardan tahmin et.
+        if not audio or not video:
+            for fmt in (info.get("formats") or []):
+                if fmt.get("acodec") and fmt.get("acodec") != "none":
+                    audio = True
+                if fmt.get("vcodec") and fmt.get("vcodec") != "none":
+                    video = True
+        return audio, video
+
+    def _find_matching_audio(self, task: "DownloadTask") -> str:
+        """Aynı sayfa için ses-only HLS yakalaması varsa URL'sini döner."""
+        if not task.page_url:
+            return ""
+        with self.lock:
+            candidates = [
+                c for c in self.captures
+                if c.page_url == task.page_url and c.kind in ("hls", "dash") and c.url != task.url
+            ]
+        for cap in candidates:
+            audio, video = self._probe_av(cap.url)
+            if audio and not video:
+                return cap.url
+        return ""
+
+    def _download_one(self, task: "DownloadTask", url: str, task_id: str) -> str:
+        orig_url = task.url
+        task.url = url
+        downloader = YtDlpDownloader(
+            task,
+            self.config,
+            self._progress_callback(task_id),
+            self._status_callback(task_id),
+            self._log_callback(task_id),
+            self._metadata_callback(task_id),
+        )
+        with self.lock:
+            self.controllers[task_id] = downloader
+            if task_id in self.pause_requested:
+                downloader.pause()
+            if task_id in self.cancel_requested:
+                downloader.cancel()
+        try:
+            return downloader.run()
+        finally:
+            task.url = orig_url
+
+    def _merge_av(self, video_path: str, audio_path: str) -> str:
+        import shutil as _shutil
+        from pathlib import Path as _Path
+        video_p = _Path(video_path)
+        audio_p = _Path(audio_path)
+        out = video_p.with_name(video_p.stem + "_merged.mp4")
+        cmd = ["ffmpeg", "-y", "-i", str(video_p), "-i", str(audio_p), "-c", "copy", str(out)]
+        subprocess.run(cmd, check=True, capture_output=True)
+        # Temizlik: orijinal video ve ses dosyalarını sil.
+        try:
+            video_p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            audio_p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return str(out)
+
     def _run_task(self, task_id: str) -> None:
         downloader = None
         task = self.get_task(task_id)
@@ -964,56 +1068,80 @@ class DownloadManager:
             mode = self._mode_for(task)
             log.info("Görev başlıyor: %s mod=%s", task_id, mode)
 
-            if mode == "direct":
-                downloader = DirectDownloader(
-                    task,
-                    self.config,
-                    self._progress_callback(task_id),
-                    self._status_callback(task_id),
-                    self._title_callback(task_id),
-                    self._log_callback(task_id),
-                )
-            else:
-                downloader = YtDlpDownloader(
-                    task,
-                    self.config,
-                    self._progress_callback(task_id),
-                    self._status_callback(task_id),
-                    self._log_callback(task_id),
-                    self._metadata_callback(task_id),
-                )
+            # Ses+görüntü birleştirme: video-only HLS için aynı sayfadaki
+            # audio-only HLS yakalamasını bul ve tek dosyada birleştir.
+            if mode != "direct" and task.kind in ("hls", "dash") and not task.audio_url:
+                try:
+                    has_audio, has_video = self._probe_av(task.url)
+                    if has_video and not has_audio:
+                        audio_url = self._find_matching_audio(task)
+                        if audio_url:
+                            task.audio_url = audio_url
+                            self._save_locked()
+                            log.info("Eşleşen ses akışı bulundu: %s", audio_url[:80])
+                except Exception:
+                    pass
 
-            with self.lock:
-                self.controllers[task_id] = downloader
-                if task_id in self.pause_requested:
-                    downloader.pause()
-                if task_id in self.cancel_requested:
-                    downloader.cancel()
-
-            try:
-                path = downloader.run()
-            except NotDirectError:
-                if mode != "direct":
+            if mode != "direct" and task.audio_url:
+                # Birleştirilmiş indirme: önce video, sonra ses, sonra ffmpeg merge.
+                try:
+                    video_path = self._download_one(task, task.url, task_id)
+                    audio_path = self._download_one(task, task.audio_url, task_id)
+                    path = self._merge_av(video_path, audio_path)
+                    task.audio_url = ""  # tekrar birleştirme yapma
+                except Exception as exc:
                     raise
-                log.info("Doğrudan indirme başarısız, yt-dlp'ye geçiliyor: %s", task_id)
-                with self.lock:
-                    task.kind = "page"
-                    task.detail = t("task.detail.trying_page")
-                downloader = YtDlpDownloader(
-                    task,
-                    self.config,
-                    self._progress_callback(task_id),
-                    self._status_callback(task_id),
-                    self._log_callback(task_id),
-                    self._metadata_callback(task_id),
-                )
+            else:
+                if mode == "direct":
+                    downloader = DirectDownloader(
+                        task,
+                        self.config,
+                        self._progress_callback(task_id),
+                        self._status_callback(task_id),
+                        self._title_callback(task_id),
+                        self._log_callback(task_id),
+                    )
+                else:
+                    downloader = YtDlpDownloader(
+                        task,
+                        self.config,
+                        self._progress_callback(task_id),
+                        self._status_callback(task_id),
+                        self._log_callback(task_id),
+                        self._metadata_callback(task_id),
+                    )
+
                 with self.lock:
                     self.controllers[task_id] = downloader
                     if task_id in self.pause_requested:
                         downloader.pause()
                     if task_id in self.cancel_requested:
                         downloader.cancel()
-                path = downloader.run()
+
+                try:
+                    path = downloader.run()
+                except NotDirectError:
+                    if mode != "direct":
+                        raise
+                    log.info("Doğrudan indirme başarısız, yt-dlp'ye geçiliyor: %s", task_id)
+                    with self.lock:
+                        task.kind = "page"
+                        task.detail = t("task.detail.trying_page")
+                    downloader = YtDlpDownloader(
+                        task,
+                        self.config,
+                        self._progress_callback(task_id),
+                        self._status_callback(task_id),
+                        self._log_callback(task_id),
+                        self._metadata_callback(task_id),
+                    )
+                    with self.lock:
+                        self.controllers[task_id] = downloader
+                        if task_id in self.pause_requested:
+                            downloader.pause()
+                        if task_id in self.cancel_requested:
+                            downloader.cancel()
+                    path = downloader.run()
 
             with self.lock:
                 if task_id in self.cancel_requested:
