@@ -77,6 +77,59 @@ def ytdlp_version() -> str:
         return "bilinmiyor"
 
 
+def extract_playlist_info(url: str, cookies_browser: str = "none", referer: str = "") -> dict | None:
+    """Verilen URL'nin oynatma listesi olup olmadığını ve içindeki videoları döner."""
+    cmd = ytdlp_base_command() + [
+        "--flat-playlist",
+        "--dump-single-json",
+        "--no-warnings",
+        "--socket-timeout", "20",
+    ]
+    if cookies_browser in {"brave", "firefox", "chrome", "chromium"}:
+        cmd += ["--cookies-from-browser", cookies_browser]
+    if referer:
+        cmd += ["--add-header", f"Referer:{referer}"]
+    cmd.append(url)
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        )
+        if res.returncode != 0:
+            return None
+        data = json.loads((res.stdout or "").strip())
+        if not isinstance(data, dict):
+            return None
+        entries = data.get("entries")
+        if isinstance(entries, list) and len(entries) > 1:
+            items = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                item_url = entry.get("url") or entry.get("webpage_url") or ""
+                if not item_url and entry.get("id"):
+                    item_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                if item_url:
+                    items.append({
+                        "id": str(entry.get("id") or ""),
+                        "title": str(entry.get("title") or "Video").strip(),
+                        "url": item_url,
+                        "duration": int(entry.get("duration") or 0),
+                    })
+            if len(items) > 1:
+                return {
+                    "is_playlist": True,
+                    "title": str(data.get("title") or "Oynatma Listesi").strip(),
+                    "items": items,
+                }
+    except Exception:
+        pass
+    return None
+
+
 class YtDlpDownloader:
     def __init__(
         self,
@@ -287,6 +340,9 @@ class YtDlpDownloader:
             cmd += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"]
         else:
             cmd += ["--merge-output-format", "mp4/mkv"]
+            if bool(self.config.get("download_subtitles", False)):
+                langs = str(self.config.get("subtitle_langs", "tr,en") or "tr,en")
+                cmd += ["--write-subs", "--write-auto-subs", "--sub-langs", langs, "--embed-subs"]
         limit = int(self.config.get("speed_limit_kbps", 0) or 0)
         if limit > 0:
             cmd += ["--limit-rate", f"{limit}K"]

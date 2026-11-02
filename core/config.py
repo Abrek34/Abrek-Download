@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -44,6 +44,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "window_geometry": "",
     "theme": "dark",
     "language": "tr",
+    "watch_clipboard": False,
+    "download_subtitles": False,
+    "subtitle_langs": "tr,en",
+    "shutdown_on_finish": "none",  # none | shutdown | suspend
 }
 
 

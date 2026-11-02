@@ -915,6 +915,7 @@ class DownloadManager:
                 task.updated_at = now()
                 self._save_locked()
                 log.info("Görev tamamlandı: %s -> %s", task_id, path)
+                self._check_finish_action_locked()
 
         except (TaskPaused, DirectPaused, YtPaused):
             with self.lock:
@@ -984,6 +985,45 @@ class DownloadManager:
             self._wake.set()
 
     # -------------------------------------------------------------------- shutdown
+    def _check_finish_action_locked(self) -> None:
+        action = str(self.config.get("shutdown_on_finish", "none") or "none")
+        if action not in {"shutdown", "suspend"}:
+            return
+        remaining = [
+            t for t in self.tasks.values()
+            if t.status in ACTIVE_STATUSES or t.status == "queued"
+        ]
+        if not remaining:
+            log.info("Tüm indirmeler tamamlandı, kapanış eylemi uygulanıyor: %s", action)
+            cmd = ["systemctl", "poweroff"] if action == "shutdown" else ["systemctl", "suspend"]
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as exc:
+                log.error("Kapanış eylemi başarısız: %s", exc)
+
+    def check_playlist(self, url: str) -> dict | None:
+        from .ytdlp import extract_playlist_info
+        cookies = str(self.config.get("cookies_browser", "none") or "none")
+        return extract_playlist_info(url, cookies_browser=cookies)
+
+    def add_playlist_items(self, items: list[dict], quality: str | None = None) -> int:
+        count = 0
+        for item in items:
+            item_url = item.get("url")
+            if not item_url:
+                continue
+            try:
+                _, dup = self.add_url(
+                    item_url,
+                    quality=quality,
+                    title=item.get("title", ""),
+                )
+                if not dup:
+                    count += 1
+            except Exception:
+                pass
+        return count
+
     def shutdown(self, timeout: float = 6.0) -> None:
         log.info("İndirme yöneticisi kapatılıyor")
         self._shutting_down = True

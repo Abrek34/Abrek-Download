@@ -132,6 +132,7 @@ class VideoAvciApp(tk.Tk):
         self._toast_after = None
         self._notified_completed: set[str] = set()
         self._tray_icon = None
+        self._last_clipboard = ""
 
         self.title(t("app.title"))
         self.configure(bg=BG)
@@ -150,6 +151,7 @@ class VideoAvciApp(tk.Tk):
 
         self.after(120, self._drain_queue)
         self.after(500, self._poll)
+        self.after(1500, self._poll_clipboard)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     # ------------------------------------------------------------------ pencere
@@ -516,6 +518,29 @@ class VideoAvciApp(tk.Tk):
             self._last_snapshot = snapshot
             self._apply_snapshot(snapshot)
         self.after(700, self._poll)
+
+    def _poll_clipboard(self) -> None:
+        if self._closing:
+            return
+        if bool(self.cfg.get("watch_clipboard", False)):
+            try:
+                text = self.clipboard_get().strip()
+                if text and text != self._last_clipboard:
+                    if text.startswith(("http://", "https://")):
+                        video_patterns = (
+                            "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
+                            "twitter.com", "x.com", "tiktok.com", "instagram.com",
+                            "facebook.com", "fb.watch", "twitch.tv", "reddit.com",
+                            ".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".mp3",
+                        )
+                        if any(pattern in text.lower() for pattern in video_patterns):
+                            self._last_clipboard = text
+                            self.pages["downloads"].url_entry.set_value(text)
+                            self.show_page("downloads")
+                            self.toast(t("clipboard.detected_toast"), "info")
+            except Exception:
+                pass
+        self.after(2000, self._poll_clipboard)
 
     def refresh_now(self) -> None:
         if self._closing:

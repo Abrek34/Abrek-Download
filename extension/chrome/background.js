@@ -491,6 +491,7 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
         referer: item.referer || record.pageUrl || '',
         content_type: item.contentType || '',
         size: Number(item.size) || 0,
+        quality: message.quality || 'best',
       };
       const result = await fetchJson(API_BASE + '/api/download', {
         method: 'POST',

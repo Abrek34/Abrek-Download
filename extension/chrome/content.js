@@ -117,17 +117,45 @@
         return;
       }
       for (const item of items) {
-        const b = document.createElement('button');
-        b.textContent = (item.label || 'MEDYA') + ' — ' + (item.title || '').slice(0, 46);
-        b.addEventListener('click', () => {
-          removeMenu();
-          ext.runtime.sendMessage({ type: 'download-url', url: item.url }, (r) => {
-            if (!r || !r.ok) {
-              // sessizce geç; popup üzerinden denenebilir
-            }
+        const row = document.createElement('div');
+        row.style.padding = '6px 4px';
+        row.style.borderBottom = '1px solid #242c3b';
+
+        const title = document.createElement('div');
+        title.style.fontWeight = 'bold';
+        title.style.marginBottom = '4px';
+        title.style.fontSize = '11px';
+        title.style.color = '#c7d2fe';
+        title.textContent = (item.label || 'MEDYA') + ' · ' + (item.title || 'Video').slice(0, 40);
+        row.appendChild(title);
+
+        const actions = document.createElement('div');
+        actions.style.display = 'flex';
+        actions.style.gap = '4px';
+
+        const qOptions = [
+          { label: '⚡ En İyi', q: 'best' },
+          { label: '720p', q: '720' },
+          { label: '🎵 MP3', q: 'audio' }
+        ];
+
+        for (const opt of qOptions) {
+          const btn = document.createElement('button');
+          btn.textContent = opt.label;
+          btn.style.flex = '1';
+          btn.style.padding = '4px 6px';
+          btn.style.textAlign = 'center';
+          btn.style.fontSize = '10px';
+          btn.style.background = '#20293a';
+          btn.style.borderRadius = '4px';
+          btn.addEventListener('click', () => {
+            removeMenu();
+            ext.runtime.sendMessage({ type: 'download-url', url: item.url, quality: opt.q });
           });
-        });
-        menu.appendChild(b);
+          actions.appendChild(btn);
+        }
+        row.appendChild(actions);
+        menu.appendChild(row);
       }
     });
   }

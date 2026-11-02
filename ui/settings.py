@@ -50,6 +50,14 @@ def get_cookie_options() -> list[tuple[str, str]]:
     ]
 
 
+def get_finish_options() -> list[tuple[str, str]]:
+    return [
+        (t("settings.finish_action.none"), "none"),
+        (t("settings.finish_action.shutdown"), "shutdown"),
+        (t("settings.finish_action.suspend"), "suspend"),
+    ]
+
+
 class SettingsPage(tk.Frame):
     def __init__(self, parent: tk.Misc, app):
         super().__init__(parent, bg=BG)
@@ -222,7 +230,34 @@ class SettingsPage(tk.Frame):
             text=t("settings.notify_downloads"),
             variable=self.notify_downloads_var,
             style="TCheckbutton",
+        ).pack(fill="x", pady=(0, 6))
+
+        self.clipboard_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            body,
+            text=t("settings.watch_clipboard"),
+            variable=self.clipboard_var,
+            style="TCheckbutton",
+        ).pack(fill="x", pady=(0, 6))
+
+        self.subtitles_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            body,
+            text=t("settings.download_subtitles"),
+            variable=self.subtitles_var,
+            style="TCheckbutton",
         ).pack(fill="x", pady=(0, 12))
+
+        finish_row = self._row(body, t("settings.finish_action.label"), t("settings.finish_action.hint"))
+        finish_opts = get_finish_options()
+        self.finish_combo = ttk.Combobox(
+            finish_row,
+            state="readonly",
+            values=[label for label, _code in finish_opts],
+            width=16,
+            font=font(10),
+        )
+        self.finish_combo.pack(side="right")
 
         theme_row = self._row(body, t("settings.theme"), t("settings.theme_hint"))
         self.theme_combo = ttk.Combobox(
@@ -342,6 +377,12 @@ class SettingsPage(tk.Frame):
         self.auto_resume_var.set(bool(config.get("auto_resume", True)))
         self.notify_var.set(bool(config.get("notify_captures", True)))
         self.notify_downloads_var.set(bool(config.get("notify_downloads", True)))
+        self.clipboard_var.set(bool(config.get("watch_clipboard", False)))
+        self.subtitles_var.set(bool(config.get("download_subtitles", False)))
+        finish_action = str(config.get("shutdown_on_finish", "none") or "none")
+        finish_map = {code: label for label, code in get_finish_options()}
+        self.finish_combo.set(finish_map.get(finish_action, t("settings.finish_action.none")))
+
         self.theme_combo.set(
             t("settings.theme.light") if str(config.get("theme", "dark")) == "light" else t("settings.theme.dark")
         )
@@ -407,6 +448,9 @@ class SettingsPage(tk.Frame):
         cookie_label_to_code = {label: code for label, code in get_cookie_options()}
         cookies = cookie_label_to_code.get(self.cookies_combo.get(), "none")
 
+        finish_label_to_code = {label: code for label, code in get_finish_options()}
+        finish_action = finish_label_to_code.get(self.finish_combo.get(), "none")
+
         selected_lang_name = self.language_combo.get()
         selected_lang_code = "tr"
         for code, name in available_languages().items():
@@ -428,6 +472,9 @@ class SettingsPage(tk.Frame):
                 "auto_resume": bool(self.auto_resume_var.get()),
                 "notify_captures": bool(self.notify_var.get()),
                 "notify_downloads": bool(self.notify_downloads_var.get()),
+                "watch_clipboard": bool(self.clipboard_var.get()),
+                "download_subtitles": bool(self.subtitles_var.get()),
+                "shutdown_on_finish": finish_action,
                 "theme": theme_val,
             }
         )

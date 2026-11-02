@@ -59,6 +59,7 @@ class DownloadsPage(tk.Frame):
         self._filter = "all"
         self._filter_buttons: dict[str, tk.Button] = {}
         self._tasks: list[dict] = []
+        self._search_query = ""
         self._build()
 
     # ------------------------------------------------------------------ kurulum
@@ -162,6 +163,17 @@ class DownloadsPage(tk.Frame):
             button.pack(side="left", padx=(0, 7))
             self._filter_buttons[key] = button
 
+        self.search_entry = PlaceholderEntry(
+            chips,
+            placeholder=t("downloads.search_placeholder"),
+            bg=CARD,
+            fg=TEXT,
+            width=20,
+            font=font(9),
+        )
+        self.search_entry.pack(side="left", padx=(10, 0), ipady=3)
+        self.search_entry.bind("<KeyRelease>", lambda _e: self._on_search_change())
+
         actions = tk.Frame(bar, bg=BG)
         actions.pack(side="right")
         make_button(actions, t("downloads.pause_all"), self.pause_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
@@ -179,6 +191,29 @@ class DownloadsPage(tk.Frame):
             return
         label = self.quality_combo.get()
         quality = LABEL_TO_QUALITY.get(label, "best")
+
+        if "list=" in url or "playlist" in url.lower():
+            try:
+                playlist_info = self.app.manager.check_playlist(url)
+                if playlist_info and playlist_info.get("items") and len(playlist_info["items"]) > 1:
+                    count = len(playlist_info["items"])
+                    title = playlist_info.get("title") or "Oynatma Listesi"
+                    ans = messagebox.askyesnocancel(
+                        t("downloads.playlist_dialog_title"),
+                        t("downloads.playlist_dialog_msg", title=title, count=count),
+                        parent=self,
+                    )
+                    if ans is True:
+                        added = self.app.manager.add_playlist_items(playlist_info["items"], quality=quality)
+                        self.app.toast(t("downloads.toast.playlist_queued", count=added), "success")
+                        self.url_entry.clear()
+                        self.app.refresh_now()
+                        return
+                    elif ans is None:
+                        return
+            except Exception:
+                pass
+
         try:
             task, duplicate = self.app.manager.add_url(url, quality=quality)
         except ValueError as exc:
@@ -247,6 +282,10 @@ class DownloadsPage(tk.Frame):
         self.url_entry.focus_set()
         self.url_entry.select_range(0, "end")
 
+    def _on_search_change(self) -> None:
+        self._search_query = self.search_entry.value().strip()
+        self.update_tasks(self._tasks)
+
     # ------------------------------------------------------------------ güncelle
     def update_snapshot(self, snapshot: dict) -> None:
         self._tasks = list(snapshot.get("tasks") or [])
@@ -263,6 +302,13 @@ class DownloadsPage(tk.Frame):
             self._filter_buttons[key].configure(text=f"{t(text_key)}  {counts[key]}")
 
         filtered = tasks
+        if self._search_query:
+            q = self._search_query.lower()
+            filtered = [
+                t_item for t_item in filtered
+                if q in (t_item.get("display_title") or "").lower() or q in (t_item.get("url") or "").lower()
+            ]
+
         if self._filter == "active":
             filtered = [t_item for t_item in tasks if t_item.get("status") not in {"completed", "error", "canceled"}]
         elif self._filter == "completed":
