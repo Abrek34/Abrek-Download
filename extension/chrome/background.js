@@ -133,6 +133,16 @@ function classify(contentType, url) {
   return null;
 }
 
+function mediaLabel(item) {
+  const ct = String(item.contentType || '').toLowerCase();
+  const url = String(item.url || '').toLowerCase();
+  if (item.kind === 'hls') return 'AKIŞ';
+  if (item.kind === 'dash') return 'DASH';
+  if (ct.startsWith('audio/') || /\.(mp3|m4a|aac|ogg|opus|wav|flac)(?:$|[?#])/.test(url)) return 'SES';
+  if (ct.startsWith('video/') || /\.(mp4|webm|mkv|mov|m4v|avi|flv|ogv)(?:$|[?#])/.test(url)) return 'GÖRÜNTÜ';
+  return 'MEDYA';
+}
+
 function titleFromUrl(url) {
   try {
     const parsed = new URL(url);
@@ -433,6 +443,50 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (message.type === 'get-media' && tabId >= 0) {
+    (async () => {
+      const record = await readTab(tabId);
+      const items = (record.items || []).map((item) => ({
+        url: item.url,
+        title: item.title || item.pageTitle || titleFromUrl(item.url),
+        kind: item.kind || 'direct',
+        contentType: item.contentType || '',
+        size: Number(item.size) || 0,
+        label: mediaLabel(item),
+      }));
+      sendResponse({ ok: true, items });
+    })().catch(() => sendResponse({ ok: false, items: [] }));
+    return true;
+  }
+
+  if (message.type === 'download-url' && tabId >= 0) {
+    const url = String(message.url || '').trim();
+    if (!url) {
+      sendResponse({ ok: false, error: 'URL yok' });
+      return false;
+    }
+    (async () => {
+      const record = await readTab(tabId);
+      const item = (record.items || []).find((entry) => entry.url === url) || {};
+      const body = {
+        url,
+        kind: item.kind || 'direct',
+        title: item.title || item.pageTitle || '',
+        page_url: item.pageUrl || record.pageUrl || '',
+        referer: item.referer || record.pageUrl || '',
+        content_type: item.contentType || '',
+        size: Number(item.size) || 0,
+      };
+      const result = await fetchJson(API_BASE + '/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      sendResponse({ ok: true, result });
+    })().catch((error) => sendResponse({ ok: false, error: String(error) }));
     return true;
   }
 

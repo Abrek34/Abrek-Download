@@ -67,4 +67,114 @@
   }
 
   setInterval(collect, 10000);
+
+  // ------------------------------------------------------------------ video üstü indir düğmesi
+  const MENU_ID = 'va-dl-menu';
+  function ensureStyles() {
+    if (document.getElementById('va-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'va-styles';
+    style.textContent = `
+      .va-dl-btn { position:absolute; top:8px; right:8px; z-index:2147483647; background:rgba(0,0,0,.72); color:#fff; border:1px solid rgba(255,255,255,.15); border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; opacity:0; transition:opacity .18s; }
+      .va-dl-wrap { position:relative; display:inline-block; }
+      .va-dl-wrap:hover .va-dl-btn, .va-dl-btn:hover { opacity:1; }
+      .va-dl-menu { position:fixed; z-index:2147483647; background:#151a24; color:#edf1f8; border:1px solid #242c3b; border-radius:8px; padding:6px; min-width:220px; max-width:320px; box-shadow:0 6px 18px rgba(0,0,0,.45); font-family:sans-serif; font-size:12px; }
+      .va-dl-menu button { display:block; width:100%; text-align:left; background:transparent; color:#edf1f8; border:none; padding:6px 8px; cursor:pointer; border-radius:4px; }
+      .va-dl-menu button:hover { background:#1f2737; }
+      .va-dl-menu .va-empty { padding:6px 8px; color:#77829a; }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function removeMenu() {
+    const m = document.getElementById(MENU_ID);
+    if (m) m.remove();
+  }
+
+  function showMenu(anchor) {
+    removeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'va-dl-menu';
+    menu.id = MENU_ID;
+    const rect = anchor.getBoundingClientRect();
+    menu.style.left = Math.max(8, rect.right - 228) + 'px';
+    menu.style.top = (rect.bottom + 6) + 'px';
+
+    const loading = document.createElement('div');
+    loading.className = 'va-empty';
+    loading.textContent = 'Yükleniyor…';
+    menu.appendChild(loading);
+    document.body.appendChild(menu);
+
+    ext.runtime.sendMessage({ type: 'get-media' }, (resp) => {
+      menu.innerHTML = '';
+      const items = (resp && Array.isArray(resp.items)) ? resp.items : [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'va-empty';
+        empty.textContent = 'Yakalanan medya yok';
+        menu.appendChild(empty);
+        return;
+      }
+      for (const item of items) {
+        const b = document.createElement('button');
+        b.textContent = (item.label || 'MEDYA') + ' — ' + (item.title || '').slice(0, 46);
+        b.addEventListener('click', () => {
+          removeMenu();
+          ext.runtime.sendMessage({ type: 'download-url', url: item.url }, (r) => {
+            if (!r || !r.ok) {
+              // sessizce geç; popup üzerinden denenebilir
+            }
+          });
+        });
+        menu.appendChild(b);
+      }
+    });
+  }
+
+  function wrapVideo(video) {
+    if (video.dataset.vaWrapped) return;
+    video.dataset.vaWrapped = '1';
+    const parent = video.parentElement;
+    if (!parent) return;
+    const pos = getComputedStyle(parent).position;
+    if (pos === 'static') parent.style.position = 'relative';
+
+    const btn = document.createElement('button');
+    btn.className = 'va-dl-btn';
+    btn.textContent = '⬇';
+    btn.title = 'Abrek Download ile indir';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showMenu(btn);
+    });
+    parent.appendChild(btn);
+
+    const show = () => { btn.style.opacity = '1'; };
+    const hide = () => { btn.style.opacity = '0'; };
+    video.addEventListener('mouseenter', show);
+    video.addEventListener('mouseleave', hide);
+    btn.addEventListener('mouseenter', show);
+    btn.addEventListener('mouseleave', hide);
+  }
+
+  function scanVideos() {
+    ensureStyles();
+    for (const v of document.querySelectorAll('video')) wrapVideo(v);
+  }
+
+  scanVideos();
+  const vObserver = new MutationObserver(() => scanVideos());
+  try {
+    vObserver.observe(document.documentElement, { childList: true, subtree: true });
+  } catch {
+    // sessizce geç
+  }
+  setInterval(scanVideos, 4000);
+
+  document.addEventListener('click', (e) => {
+    const m = document.getElementById(MENU_ID);
+    if (m && (!e.target || !m.contains(e.target))) removeMenu();
+  }, true);
 })();
