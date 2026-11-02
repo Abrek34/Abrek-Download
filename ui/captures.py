@@ -50,6 +50,16 @@ class CapturesPage(tk.Frame):
         )
         self.clear_button.pack(side="right")
 
+        self.download_all_button = make_button(
+            bar,
+            t("captures.download_all"),
+            self.download_all,
+            kind="primary",
+            size=8,
+            bg=BG,
+        )
+        self.download_all_button.pack(side="right", padx=(0, 8))
+
         self.scroll = ScrollFrame(self)
         self.scroll.pack(fill="both", expand=True, pady=(14, 0))
 
@@ -80,6 +90,17 @@ class CapturesPage(tk.Frame):
         self.app.toast(t("captures.cleared"), "info")
         self.app.refresh_now()
 
+    def download_all(self) -> None:
+        if not self._captures:
+            return
+        added, duplicates = self.app.manager.download_all_captures()
+        if added:
+            self.app.toast(t("captures.toast.download_all", count=added), "success")
+            self.app.show_page("downloads")
+        elif duplicates:
+            self.app.toast(t("captures.toast.all_queued"), "info")
+        self.app.refresh_now()
+
     # ------------------------------------------------------------------ güncelle
     def update_snapshot(self, snapshot: dict) -> None:
         captures = list(snapshot.get("captures") or [])
@@ -88,10 +109,13 @@ class CapturesPage(tk.Frame):
             text=t("captures.count", count=len(captures)) if captures else t("captures.none")
         )
         self.clear_button.configure(state="normal" if captures else "disabled")
+        self.download_all_button.configure(state="normal" if captures else "disabled")
         if not captures:
             self.clear_button.configure(fg=MUTED, cursor="arrow")
+            self.download_all_button.configure(cursor="arrow")
         else:
             self.clear_button.configure(fg=MUTED, cursor="hand2")
+            self.download_all_button.configure(cursor="hand2")
 
         signature = tuple(
             (

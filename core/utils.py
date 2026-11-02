@@ -129,6 +129,32 @@ def is_http_url(url: str) -> bool:
         return False
 
 
+def is_youtube_url(url: str) -> bool:
+    """YouTube ve youtu.be bağlantılarını tanır."""
+    try:
+        host = (urlparse(url).hostname or "").lower().strip(".")
+    except Exception:
+        return False
+    return (
+        host == "youtu.be"
+        or host == "youtube.com"
+        or host.endswith(".youtube.com")
+        or host == "youtube-nocookie.com"
+        or host.endswith(".youtube-nocookie.com")
+    )
+
+
+def first_url_argument(values) -> str:
+    """Komut satırı argümanlarından ilk açık http(s) bağlantısını seçer."""
+    for value in values:
+        text = str(value or "").strip().strip('"\'')
+        if not re.match(r"^https?://", text, re.IGNORECASE):
+            continue
+        if is_http_url(text):
+            return text
+    return ""
+
+
 def url_extension(url: str) -> str:
     try:
         path = urlparse(url).path
@@ -209,10 +235,12 @@ def filename_from_url(
 
     ext = os.path.splitext(name)[1].lower()
     mime = (content_type or "").split(";")[0].strip().lower()
+    guessed = MIME_EXTENSION.get(mime) or mimetypes.guess_extension(mime) or ""
+    # URL yolunda .php, .aspx gibi medya olmayan bir uzantı varsa MIME türünden
+    # doğru uzantıyı seç. Örn. video.php + video/mp4 -> video.mp4
+    if ext and ext not in MEDIA_EXTENSIONS | AUDIO_EXTENSIONS | MANIFEST_EXTENSIONS and guessed:
+        ext = guessed
     if not ext:
-        guessed = MIME_EXTENSION.get(mime) or mimetypes.guess_extension(mime) or ""
-        if not guessed and fallback_title:
-            guessed = ""
         ext = guessed
     if not ext:
         # URL uzantısı yoksa makul bir varsayılan seç.

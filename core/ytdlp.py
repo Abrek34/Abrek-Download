@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Callable
 
 from .config import PARTS_DIR
+from .i18n import t
 from .utils import (
     clean_error,
     human_duration,
+    is_youtube_url,
     parse_eta_text,
     parse_number,
     parse_percent,
@@ -25,7 +27,7 @@ from .utils import (
 )
 
 ProgressCallback = Callable[[int, int, float, float, int], None]
-StatusCallback = Callable[[str], None]
+StatusCallback = Callable[[str, str], None]
 LogCallback = Callable[[str], None]
 MetadataCallback = Callable[[dict], None]
 
@@ -64,7 +66,27 @@ def ytdlp_base_command() -> list[str]:
     return [sys.executable, "-m", "yt_dlp", "--ignore-config"]
 
 
+def youtube_extra_args(url: str) -> list[str]:
+    """YouTube için JS challenge çözücü bileşenlerini etkinleştirir."""
+    if is_youtube_url(url):
+        return ["--remote-components", "ejs:github"]
+    return []
+
+
 def ytdlp_version() -> str:
+    # Önce kurulu paket meta verisini oku; alt süreç başlatmadan hızlıca döner.
+    try:
+        from importlib.metadata import version
+
+        return version("yt-dlp")
+    except Exception:
+        pass
+    try:
+        from yt_dlp.version import __version__
+
+        return str(__version__)
+    except Exception:
+        pass
     try:
         result = subprocess.run(
             ytdlp_base_command() + ["--version"],
@@ -85,6 +107,7 @@ def extract_playlist_info(url: str, cookies_browser: str = "none", referer: str 
         "--no-warnings",
         "--socket-timeout", "20",
     ]
+    cmd += youtube_extra_args(url)
     if cookies_browser in {"brave", "firefox", "chrome", "chromium"}:
         cmd += ["--cookies-from-browser", cookies_browser]
     if referer:
@@ -209,8 +232,13 @@ class YtDlpDownloader:
             args += ["--add-header", f"Referer:{referer}"]
         return args
 
+    def _with_youtube_hint(self, message: str) -> str:
+        if is_youtube_url(self.task.url) and "This video is not available" in message:
+            return f"{message} — {t('ytdlp.youtube_unavailable_hint')}"
+        return message
+
     def analyze(self) -> dict:
-        self.status_cb("Bağlantı analiz ediliyor")
+        self.status_cb("analyzing", t("task.detail.analyzing"))
         self._check_stop()
         cmd = ytdlp_base_command() + [
             "--no-playlist",
@@ -221,6 +249,7 @@ class YtDlpDownloader:
             "--retries",
             "3",
         ]
+        cmd += youtube_extra_args(self.task.url)
         cmd += self._cookies_args()
         cmd += self._header_args()
         cmd.append(self.task.url)
@@ -241,7 +270,7 @@ class YtDlpDownloader:
         self._check_stop()
         if result.returncode != 0:
             message = clean_error(result.stderr or result.stdout)
-            raise DownloadError(message or "Video bilgisi alınamadı.")
+            raise DownloadError(self._with_youtube_hint(message or "Video bilgisi alınamadı."))
 
         stdout = (result.stdout or "").strip()
         if not stdout:
@@ -346,6 +375,7 @@ class YtDlpDownloader:
         limit = int(self.config.get("speed_limit_kbps", 0) or 0)
         if limit > 0:
             cmd += ["--limit-rate", f"{limit}K"]
+        cmd += youtube_extra_args(self.task.url)
         cmd += self._cookies_args()
         cmd += self._header_args()
         cmd.append(self.task.url)
@@ -377,13 +407,13 @@ class YtDlpDownloader:
             dest = line.split("Destination:", 1)[1].strip()
             if dest and dest not in self._dest_paths:
                 self._dest_paths.append(dest)
-            self.status_cb("İndiriliyor")
+            self.status_cb("downloading", t("task.status.downloading"))
             return
         if line.startswith("[download]") and "has already been downloaded" in line:
-            self.status_cb("Dosya zaten mevcut")
+            self.status_cb("processing", t("task.detail.already_downloaded"))
             return
         if any(token in line for token in ("[Merger]", "[ExtractAudio]", "[FixupM3u8]", "[VideoRemuxer]", "[VideoConvertor]")):
-            self.status_cb("İşleniyor")
+            self.status_cb("processing", t("task.status.processing"))
             match = re.search(r'into "([^"]+)"', line)
             if match:
                 self._final_hint = match.group(1)
@@ -431,7 +461,7 @@ class YtDlpDownloader:
         return ""
 
     def download(self) -> str:
-        self.status_cb("İndiriliyor")
+        self.status_cb("downloading", t("task.status.downloading"))
         cmd = self._build_download_command()
         self.log_cb("İndirme: " + " ".join(cmd))
         try:
@@ -466,11 +496,11 @@ class YtDlpDownloader:
             raise DownloadPaused()
         if returncode != 0:
             message = clean_error("\n".join(self._tail[-25:]))
-            raise DownloadError(message or f"yt-dlp hata koduyla çıktı ({returncode}).")
+            raise DownloadError(self._with_youtube_hint(message or f"yt-dlp hata koduyla çıktı ({returncode})."))
         final_path = self._read_final_path()
         if not final_path:
             raise DownloadError("İndirme tamamlandı ancak dosya yolu bulunamadı.")
-        self.status_cb("Tamamlandı")
+        self.status_cb("completed", t("task.status.completed"))
         return final_path
 
     def run(self) -> str:

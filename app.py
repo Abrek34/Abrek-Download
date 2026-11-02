@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import os
 import queue
@@ -40,7 +41,7 @@ from core.config import (
 from core.manager import DownloadManager
 from core.server import ApiServer
 from core.i18n import t
-from core.utils import human_speed, open_in_file_manager, open_path
+from core.utils import first_url_argument, human_speed, open_in_file_manager, open_path
 from ui import theme
 from ui.captures import CapturesPage
 from ui.downloads import DownloadsPage
@@ -130,7 +131,19 @@ class VideoAvciApp(tk.Tk):
         self._active_page = "downloads"
         self._nav_counts = {"downloads": 0, "captures": 0}
         self._toast_after = None
-        self._notified_completed: set[str] = set()
+        # Önceki oturumda tamamlanan/hatalı görevler için açılışta tekrar
+        # bildirim gönderme; yalnızca bu oturumda bitenleri bildir.
+        startup_tasks = manager.snapshot().get("tasks", [])
+        self._notified_completed: set[str] = {
+            str(task.get("id"))
+            for task in startup_tasks
+            if task.get("status") == "completed"
+        }
+        self._notified_failed: set[str] = {
+            str(task.get("id"))
+            for task in startup_tasks
+            if task.get("status") == "error"
+        }
         self._tray_icon = None
         self._last_clipboard = ""
 
@@ -526,6 +539,9 @@ class VideoAvciApp(tk.Tk):
             try:
                 text = self.clipboard_get().strip()
                 if text and text != self._last_clipboard:
+                    # Aynı video bağlantısı panoya tekrar geldiğinde de
+                    # algılanabilmesi için son içeriği her durumda güncelle.
+                    self._last_clipboard = text
                     if text.startswith(("http://", "https://")):
                         video_patterns = (
                             "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
@@ -534,7 +550,6 @@ class VideoAvciApp(tk.Tk):
                             ".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".mp3",
                         )
                         if any(pattern in text.lower() for pattern in video_patterns):
-                            self._last_clipboard = text
                             self.pages["downloads"].url_entry.set_value(text)
                             self.show_page("downloads")
                             self.toast(t("clipboard.detected_toast"), "info")
@@ -610,24 +625,47 @@ class VideoAvciApp(tk.Tk):
             return
         if not shutil.which("notify-send"):
             return
+        completed_ids: set[str] = set()
+        failed_ids: set[str] = set()
         for task in tasks:
             task_id = str(task.get("id") or "")
-            if not task_id or task.get("status") != "completed":
+            if not task_id:
                 continue
-            if task_id in self._notified_completed:
-                continue
-            self._notified_completed.add(task_id)
-            title = str(task.get("display_title") or task.get("title") or t("details.default_title"))[:140]
-            filepath = str(task.get("filepath") or "")
-            body = filepath or t("notify.download_complete")
-            try:
-                subprocess.Popen(
-                    ["notify-send", "-a", APP_NAME, t("notify.download_complete"), f"{title}\n{body}"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                log.debug("İndirme bildirimi gönderilemedi", exc_info=True)
+            status = task.get("status")
+            if status == "completed":
+                completed_ids.add(task_id)
+                if task_id in self._notified_completed:
+                    continue
+                self._notified_completed.add(task_id)
+                title = str(task.get("display_title") or task.get("title") or t("details.default_title"))[:140]
+                filepath = str(task.get("filepath") or "")
+                body = filepath or t("notify.download_complete")
+                try:
+                    subprocess.Popen(
+                        ["notify-send", "-a", APP_NAME, t("notify.download_complete"), f"{title}\n{body}"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    log.debug("İndirme bildirimi gönderilemedi", exc_info=True)
+            elif status == "error":
+                failed_ids.add(task_id)
+                if task_id in self._notified_failed:
+                    continue
+                self._notified_failed.add(task_id)
+                title = str(task.get("display_title") or task.get("title") or t("details.default_title"))[:140]
+                reason = str(task.get("error") or task.get("detail") or t("task.status.error"))[:220]
+                try:
+                    subprocess.Popen(
+                        ["notify-send", "-a", APP_NAME, t("notify.download_failed"), f"{title}\n{reason}"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    log.debug("Hata bildirimi gönderilemedi", exc_info=True)
+        # Yeniden denenen görevler tekrar bildirilebilsin diye kümeleri güncelle.
+        self._notified_completed &= completed_ids
+        self._notified_failed &= failed_ids
 
     # ------------------------------------------------------------------ köprü
     def _paint_api_status(self, ok: bool) -> None:
@@ -684,6 +722,22 @@ class VideoAvciApp(tk.Tk):
 
     def retry_task(self, task_id: str) -> None:
         self.manager.retry_task(task_id)
+        self.refresh_now()
+
+    def queue_url(self, url: str) -> None:
+        """Komut satırından gelen bağlantıyı kuyruğa ekler."""
+        self.show_page("downloads")
+        quality = str(self.cfg.get("default_quality", "best") or "best")
+        try:
+            task, duplicate = self.manager.add_url(url, quality=quality)
+        except Exception as exc:
+            self.pages["downloads"].url_entry.set_value(url)
+            self.toast(t("downloads.toast.add_failed", error=exc), "error")
+            return
+        if duplicate:
+            self.toast(t("downloads.toast.already_queued"), "warning")
+        else:
+            self.toast(t("downloads.toast.queued", title=task.display_title()), "success")
         self.refresh_now()
 
     def redownload_task(self, task_id: str) -> None:
@@ -758,7 +812,7 @@ class VideoAvciApp(tk.Tk):
                 )
                 self.post(lambda: self.toast(t("toast.audio_done", name=dst.name), "success"))
             except Exception as exc:
-                self.post(lambda: self.toast(t("toast.audio_failed", error=exc), "error"))
+                self.post(lambda error=str(exc): self.toast(t("toast.audio_failed", error=error), "error"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -878,6 +932,27 @@ def acquire_instance_lock():
     return handle
 
 
+def queue_url_via_api(url: str) -> bool:
+    """Çalışan uygulamaya bağlantıyı yerel API üzerinden gönderir."""
+    import urllib.request
+
+    payload = json.dumps({"url": url}).encode("utf-8")
+    request = urllib.request.Request(
+        f"http://{API_HOST}:{API_PORT}/api/download",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            if not 200 <= response.status < 300:
+                return False
+            data = json.loads(response.read().decode("utf-8"))
+            return bool(data.get("ok"))
+    except Exception:
+        return False
+
+
 def show_already_running() -> None:
     try:
         root = tk.Tk()
@@ -895,9 +970,13 @@ def show_already_running() -> None:
 def main() -> int:
     setup_logging()
     log.info("Abrek Download starting (version %s)", VERSION)
+    url_argument = first_url_argument(sys.argv[1:])
 
     lock = acquire_instance_lock()
     if lock is False:
+        if url_argument and queue_url_via_api(url_argument):
+            print(t("cli.url_queued"))
+            return 0
         show_already_running()
         return 0
     if lock is None:
@@ -921,6 +1000,8 @@ def main() -> int:
     exit_code = 0
     try:
         app = VideoAvciApp(config, manager, server, server_error)
+        if url_argument:
+            app.after(250, lambda: app.queue_url(url_argument))
         app.mainloop()
     except Exception:
         log.exception("Uygulama çöktü")

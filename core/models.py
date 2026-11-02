@@ -7,6 +7,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .i18n import t
 from .utils import AUDIO_EXTENSIONS, MEDIA_EXTENSIONS, hostname, now, url_extension
 
 ACTIVE_STATUSES = {"starting", "analyzing", "downloading", "processing", "pausing", "canceling"}
@@ -26,15 +27,46 @@ STATUS_LABELS = {
     "canceled": "İptal edildi",
 }
 
-QUALITY_LABELS = {
-    "best": "En iyi kalite",
-    "2160": "2160p (4K)",
-    "1440": "1440p (2K)",
-    "1080": "1080p",
-    "720": "720p",
-    "480": "480p",
-    "audio": "Sadece ses (MP3)",
+QUALITY_LABEL_KEYS = {
+    "best": "quality.best",
+    "2160": "quality.2160",
+    "1440": "quality.1440",
+    "1080": "quality.1080",
+    "720": "quality.720",
+    "480": "quality.480",
+    "audio": "quality.audio",
 }
+
+def _translated(key: str, fallback: str) -> str:
+    value = t(key)
+    return value if value != key else fallback
+
+
+QUALITY_LABELS = {
+    "best": _translated("quality.best", "En iyi kalite"),
+    "2160": _translated("quality.2160", "2160p (4K)"),
+    "1440": _translated("quality.1440", "1440p (2K)"),
+    "1080": _translated("quality.1080", "1080p"),
+    "720": _translated("quality.720", "720p"),
+    "480": _translated("quality.480", "480p"),
+    "audio": _translated("quality.audio", "Sadece ses (MP3)"),
+}
+
+
+def status_label(status: str) -> str:
+    key = f"task.status.{status}"
+    translated = t(key)
+    if translated != key:
+        return translated
+    return STATUS_LABELS.get(status, status)
+
+
+def quality_label(quality: str) -> str:
+    key = QUALITY_LABEL_KEYS.get(quality)
+    if not key:
+        return quality
+    translated = t(key)
+    return translated if translated != key else QUALITY_LABELS.get(quality, quality)
 
 
 @dataclass
@@ -79,8 +111,8 @@ class DownloadTask:
 
     def status_label(self) -> str:
         if self.status == "error" and self.error:
-            return "Hata"
-        return STATUS_LABELS.get(self.status, self.status)
+            return status_label("error")
+        return status_label(self.status)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -100,7 +132,7 @@ class DownloadTask:
         data["display_title"] = self.display_title()
         data["host"] = self.host()
         data["status_label"] = self.status_label()
-        data["quality_label"] = QUALITY_LABELS.get(self.quality, self.quality)
+        data["quality_label"] = quality_label(self.quality)
         return data
 
 
@@ -134,31 +166,30 @@ class Capture:
         return hostname(self.page_url or self.url)
 
     def kind_label(self) -> str:
-        return {
+        key = f"capture.kind.{self.kind}"
+        fallback = {
             "hls": "HLS",
             "dash": "DASH",
             "page": "SAYFA",
             "direct": "MEDYA",
         }.get(self.kind, "MEDYA")
+        return _translated(key, fallback).upper()
 
     def media_label(self) -> str:
         kind = self.media_kind or self._guess_media_kind()
         info = (self.media_info or "").strip()
         if kind == "manifest":
-            if info:
-                return f"AKIŞ {info}"
-            return "AKIŞ"
+            label = _translated("capture.media.stream", "AKIŞ")
+            return f"{label} {info}".strip()
         if kind == "audio":
-            return "SES (sadece)"
+            return _translated("capture.media.audio_only", "SES (sadece)").upper()
         if kind == "video":
-            if info:
-                return f"GÖRÜNTÜ {info}"
-            return "GÖRÜNTÜ"
+            label = _translated("capture.media.video", "GÖRÜNTÜ")
+            return f"{label} {info}".strip()
         if kind == "av":
-            if info:
-                return f"SES + GÖRÜNTÜ {info}"
-            return "SES + GÖRÜNTÜ"
-        return "MEDYA"
+            label = _translated("capture.media.av", "SES + GÖRÜNTÜ")
+            return f"{label} {info}".strip()
+        return _translated("capture.media.media", "MEDYA").upper()
 
     def _guess_media_kind(self) -> str:
         if self.kind in {"hls", "dash"}:

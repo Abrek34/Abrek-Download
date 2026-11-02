@@ -14,6 +14,7 @@ from typing import Callable
 import requests
 
 from .config import PARTS_DIR
+from .i18n import t
 from .utils import (
     USER_AGENT,
     filename_from_url,
@@ -25,7 +26,7 @@ from .utils import (
 )
 
 ProgressCallback = Callable[[int, int, float, float, int], None]
-StatusCallback = Callable[[str], None]
+StatusCallback = Callable[[str, str], None]
 TitleCallback = Callable[[str, str, int], None]
 LogCallback = Callable[[str], None]
 
@@ -44,6 +45,22 @@ class DownloadError(Exception):
 
 class NotDirectError(DownloadError):
     """URL bir web sayfası; yt-dlp ile denenmeli."""
+
+
+def plan_segments(total: int, count: int) -> list[dict]:
+    """Dosya boyutunu istenen sayıda bitişik bayt aralığına böler."""
+    total = max(0, int(total or 0))
+    count = max(1, int(count or 1))
+    if total <= 0:
+        return [{"start": 0, "end": -1}]
+    # Dosyadan fazla parça istemek boş aralıklar üretir; sayıyı sınırla.
+    count = min(count, total)
+    segments = []
+    for index in range(count):
+        start = total * index // count
+        end = total * (index + 1) // count - 1
+        segments.append({"start": start, "end": end})
+    return segments
 
 
 class RateLimiter:
@@ -102,6 +119,8 @@ class DirectDownloader:
         self.total = 0
         self.ranges_supported = False
         self.filename = ""
+        self.etag = ""
+        self.last_modified = ""
         self.segments: list[dict] = []
 
         self._lock = threading.Lock()
@@ -137,6 +156,9 @@ class DirectDownloader:
             "User-Agent": USER_AGENT,
             "Accept": "*/*",
             "Accept-Language": "tr,en;q=0.9",
+            # Sıkıştırılmış yanıtlar Content-Length ile yazılan bayt sayısını
+            # uyumsuzlaştırabilir; Range hesapları için sıkıştırmayı kapat.
+            "Accept-Encoding": "identity",
         }
         if self.task.referer:
             headers["Referer"] = self.task.referer
@@ -225,6 +247,8 @@ class DirectDownloader:
 
             self.final_url = response.url or self.task.url
             self.total = max(0, total)
+            self.etag = str(response.headers.get("ETag") or "").strip()
+            self.last_modified = str(response.headers.get("Last-Modified") or "").strip()
             disposition = response.headers.get("Content-Disposition")
             filename = filename_from_url(
                 self.final_url,
@@ -261,8 +285,22 @@ class DirectDownloader:
         if isinstance(existing, dict):
             same_url = existing.get("url") == self.task.url
             same_total = not self.total or int(existing.get("total") or 0) == self.total
-            same_filename = bool(existing.get("filename"))
-            if same_url and same_total and same_filename:
+            saved_filename = str(existing.get("filename") or "")
+            same_filename = bool(saved_filename) and (
+                not self.filename or saved_filename == self.filename
+            )
+            # Sunucu içeriği değiştiyse yarım parçaları birleştirmeyelim.
+            saved_etag = str(existing.get("etag") or "")
+            saved_modified = str(existing.get("last_modified") or "")
+            same_content = (
+                (not self.etag or not saved_etag or self.etag == saved_etag)
+                and (
+                    not self.last_modified
+                    or not saved_modified
+                    or self.last_modified == saved_modified
+                )
+            )
+            if same_url and same_total and same_filename and same_content:
                 segments = existing.get("segments") or []
                 if isinstance(segments, list) and segments:
                     # Sınırlar mevcut toplamla uyuşuyor mu?
@@ -281,6 +319,11 @@ class DirectDownloader:
                             break
                     if valid:
                         self.meta = existing
+                        # Yeni yanıttaki doğrulama bilgilerini meta'ya işle.
+                        if self.etag:
+                            existing["etag"] = self.etag
+                        if self.last_modified:
+                            existing["last_modified"] = self.last_modified
                         self.segments = segments
                         self.filename = str(existing.get("filename") or self.filename)
                         self.total = int(existing.get("total") or self.total)
@@ -297,19 +340,14 @@ class DirectDownloader:
                 count = min(count, 8)
             else:
                 count = 1
-            self.segments = []
-            if self.total > 0:
-                for index in range(count):
-                    start = self.total * index // count
-                    end = self.total * (index + 1) // count - 1
-                    self.segments.append({"start": start, "end": end})
-            else:
-                self.segments = [{"start": 0, "end": -1}]
+            self.segments = plan_segments(self.total, count)
             self.meta = {
                 "url": self.task.url,
                 "final_url": self.final_url,
                 "total": self.total,
                 "filename": self.filename,
+                "etag": self.etag,
+                "last_modified": self.last_modified,
                 "ranges_supported": self.ranges_supported,
                 "segments": self.segments,
                 "created_at": time.time(),
@@ -481,7 +519,10 @@ class DirectDownloader:
             session.close()
 
     def _run_segmented(self) -> None:
-        self.status_cb(f"İndiriliyor · {len(self.segments)} bağlantı")
+        self.status_cb(
+            "downloading",
+            t("task.detail.downloading_connections", count=len(self.segments)),
+        )
         threads = []
         for index, segment in enumerate(self.segments):
             thread = threading.Thread(
@@ -537,7 +578,7 @@ class DirectDownloader:
                 )
 
     def _run_single(self) -> None:
-        self.status_cb("İndiriliyor")
+        self.status_cb("downloading", t("task.status.downloading"))
         part = self._part_path(0)
         part.parent.mkdir(parents=True, exist_ok=True)
         existing = self._part_size(0)
@@ -636,7 +677,7 @@ class DirectDownloader:
 
     # ------------------------------------------------------------------- merge
     def _merge_parts(self) -> str:
-        self.status_cb("Dosya birleştiriliyor")
+        self.status_cb("processing", t("task.detail.merging"))
         output_dir = Path(self.config.download_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         final_path = unique_path(output_dir, self.filename or f"video-{self.task.id}.mp4")
@@ -667,7 +708,7 @@ class DirectDownloader:
 
     # --------------------------------------------------------------------- run
     def run(self) -> str:
-        self.status_cb("Bağlantı inceleniyor")
+        self.status_cb("analyzing", t("task.detail.probing"))
         self.probe()
         self._check_stop()
         self._load_or_create_meta()

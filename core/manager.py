@@ -31,6 +31,7 @@ from .direct import (
     DownloadPaused as DirectPaused,
     NotDirectError,
 )
+from .i18n import t
 from .models import (
     ACTIVE_STATUSES,
     Capture,
@@ -46,15 +47,52 @@ from .utils import (
     is_http_url,
     is_manifest_url,
     is_media_url,
+    is_youtube_url,
     load_json,
     normalize_url,
     now,
 )
+
+
+def prune_orphan_parts(
+    parts_dir: Path,
+    known_ids: set[str],
+    min_age_seconds: float = 0.0,
+) -> list[str]:
+    """Kuyrukta karşılığı olmayan geçici indirme klasörlerini siler.
+
+    Uygulama çökerse veya görev kuyruktan kaldırılırsa ``parts`` altında
+    sahipsiz parçalar kalabilir. Yalnızca bilinen görev kimliklerine ait
+    olmayan klasörlere dokunulur; çok yeni klasörler yarış koşullarına karşı
+    ``min_age_seconds`` ile korunabilir.
+    """
+    removed: list[str] = []
+    try:
+        entries = list(Path(parts_dir).iterdir())
+    except FileNotFoundError:
+        return removed
+    except OSError:
+        return removed
+    cutoff = time.time() - max(0.0, float(min_age_seconds))
+    for entry in entries:
+        try:
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            if entry.name in known_ids:
+                continue
+            if min_age_seconds and entry.stat().st_mtime > cutoff:
+                continue
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append(entry.name)
+        except OSError:
+            continue
+    return removed
 from .ytdlp import (
     DownloadCanceled as YtCanceled,
     DownloadError as YtError,
     DownloadPaused as YtPaused,
     YtDlpDownloader,
+    youtube_extra_args,
     ytdlp_version,
 )
 
@@ -84,6 +122,7 @@ class DownloadManager:
         self._wake = threading.Event()
         self._last_save = 0.0
         self._shutting_down = False
+        self._finish_action_done = False
         self._ytdlp_version_cache: str | None = None
         self._probe_pending: set[str] = set()
         self._load()
@@ -141,6 +180,11 @@ class DownloadManager:
                 self.captures.append(capture)
             self.captures.sort(key=lambda capture: capture.created_at, reverse=True)
             self.captures = self.captures[:200]
+
+        # Kuyrukta artık bulunmayan görevlerin yarım parçalarını temizle.
+        removed = prune_orphan_parts(PARTS_DIR, set(self.tasks), min_age_seconds=60.0)
+        if removed:
+            log.info("Sahipsiz indirme parçaları temizlendi: %s", ", ".join(sorted(removed)))
 
     def _save_locked(self, throttle: bool = False) -> None:
         if self._shutting_down:
@@ -257,6 +301,8 @@ class DownloadManager:
             auto_resume=True,
         )
         self.tasks[task.id] = task
+        # Yeni görev geldiğinde bitiş eylemi yeniden tetiklenebilir olmalı.
+        self._finish_action_done = False
         return task
 
     def add_url(
@@ -453,6 +499,7 @@ class DownloadManager:
                 "20",
                 "--dump-single-json",
             ]
+            cmd += youtube_extra_args(url)
             if referer:
                 cmd += ["--referer", referer]
             cmd += [url]
@@ -554,6 +601,26 @@ class DownloadManager:
             self._wake.set()
             return task, False
 
+    def download_all_captures(self) -> tuple[int, int]:
+        """Listedeki tüm yakalananları kuyruğa ekler.
+
+        Dönen değer: (eklenen, zaten kuyrukta olan) sayısı.
+        """
+        with self.lock:
+            capture_ids = [capture.id for capture in self.captures]
+        added = duplicates = 0
+        for capture_id in capture_ids:
+            try:
+                _, duplicate = self.download_capture(capture_id)
+            except Exception:
+                log.exception("Yakalanan video kuyruğa eklenemedi: %s", capture_id)
+                continue
+            if duplicate:
+                duplicates += 1
+            else:
+                added += 1
+        return added, duplicates
+
     def remove_capture(self, capture_id: str) -> None:
         with self.lock:
             self.captures = [item for item in self.captures if item.id != capture_id]
@@ -572,11 +639,11 @@ class DownloadManager:
             if task.status == "queued":
                 task.status = "paused"
                 task.auto_resume = False
-                task.detail = "Duraklatıldı"
+                task.detail = t("task.status.paused")
                 task.updated_at = now()
             elif task.status in ACTIVE_STATUSES:
                 task.status = "pausing"
-                task.detail = "Duraklatılıyor"
+                task.detail = t("task.status.pausing")
                 task.auto_resume = False
                 self.pause_requested.add(task_id)
                 controller = self.controllers.get(task_id)
@@ -597,10 +664,11 @@ class DownloadManager:
             task.speed = 0.0
             task.eta = 0
             task.auto_resume = True
-            task.detail = "Sırada"
+            task.detail = t("task.status.queued")
             task.updated_at = now()
             self.pause_requested.discard(task_id)
             self.cancel_requested.discard(task_id)
+            self._finish_action_done = False
             self._save_locked()
             self._wake.set()
 
@@ -613,13 +681,13 @@ class DownloadManager:
                 task.status = "canceled"
                 task.speed = 0.0
                 task.eta = 0
-                task.detail = "İptal edildi"
+                task.detail = t("task.status.canceled")
                 task.auto_resume = False
                 task.updated_at = now()
                 self._cleanup_parts(task_id)
             elif task.status in ACTIVE_STATUSES:
                 task.status = "canceling"
-                task.detail = "İptal ediliyor"
+                task.detail = t("task.status.canceling")
                 task.auto_resume = False
                 self.cancel_requested.add(task_id)
                 controller = self.controllers.get(task_id)
@@ -644,11 +712,12 @@ class DownloadManager:
             task.eta = 0
             task.downloaded = 0
             task.total = 0
-            task.detail = "Sırada"
+            task.detail = t("task.status.queued")
             task.auto_resume = True
             task.updated_at = now()
             self.pause_requested.discard(task_id)
             self.cancel_requested.discard(task_id)
+            self._finish_action_done = False
             self._save_locked()
             self._wake.set()
 
@@ -660,8 +729,7 @@ class DownloadManager:
             if task.status in ACTIVE_STATUSES:
                 return False
             self.tasks.pop(task_id, None)
-            if task.status in {"canceled", "error"}:
-                self._cleanup_parts(task_id)
+            self._cleanup_parts(task_id)
             self._save_locked()
             return True
 
@@ -698,6 +766,14 @@ class DownloadManager:
         for task_id in ids:
             self.resume_task(task_id)
 
+    def retry_failed(self) -> int:
+        """Hatalı görevleri yeniden kuyruğa alır ve sayısını döner."""
+        with self.lock:
+            ids = [task.id for task in self.tasks.values() if task.status == "error"]
+        for task_id in ids:
+            self.retry_task(task_id)
+        return len(ids)
+
     def _cleanup_parts(self, task_id: str) -> None:
         shutil.rmtree(PARTS_DIR / task_id, ignore_errors=True)
 
@@ -713,7 +789,7 @@ class DownloadManager:
                             for task in self.tasks.values():
                                 if task.status == "queued" and task.id not in self.active_ids:
                                     task.status = "starting"
-                                    task.detail = "Başlatılıyor"
+                                    task.detail = t("task.status.starting")
                                     task.updated_at = now()
                                     self.active_ids.add(task.id)
                                     thread = threading.Thread(
@@ -736,6 +812,8 @@ class DownloadManager:
     # ------------------------------------------------------------------ run task
     def _mode_for(self, task: DownloadTask) -> str:
         if str(self.config.get("cookies_browser", "none")) != "none":
+            return "ytdlp"
+        if is_youtube_url(task.url):
             return "ytdlp"
         if task.kind in {"hls", "dash", "page"}:
             return "ytdlp"
@@ -765,21 +843,16 @@ class DownloadManager:
         return callback
 
     def _status_callback(self, task_id: str):
-        def callback(text: str) -> None:
+        def callback(status: str, text: str = "") -> None:
             with self.lock:
                 task = self.tasks.get(task_id)
                 if task is None:
                     return
-                task.detail = text
-                if text.startswith("Bağlantı") or text.startswith("Analiz"):
+                if text:
+                    task.detail = text
+                if status in {"starting", "analyzing", "downloading", "processing"}:
                     if task.status not in {"pausing", "canceling"}:
-                        task.status = "analyzing"
-                elif text.startswith("İndiriliyor"):
-                    if task.status not in {"pausing", "canceling"}:
-                        task.status = "downloading"
-                elif text.startswith("Dosya") or text.startswith("İşleniyor"):
-                    if task.status not in {"pausing", "canceling"}:
-                        task.status = "processing"
+                        task.status = status
                 task.updated_at = now()
 
         return callback
@@ -880,7 +953,7 @@ class DownloadManager:
                 log.info("Doğrudan indirme başarısız, yt-dlp'ye geçiliyor: %s", task_id)
                 with self.lock:
                     task.kind = "page"
-                    task.detail = "Site videosu olarak deneniyor"
+                    task.detail = t("task.detail.trying_page")
                 downloader = YtDlpDownloader(
                     task,
                     self.config,
@@ -906,7 +979,7 @@ class DownloadManager:
                 task.speed = 0.0
                 task.eta = 0
                 task.error = ""
-                task.detail = "Tamamlandı"
+                task.detail = t("task.status.completed")
                 task.auto_resume = False
                 size = file_size(path)
                 if size:
@@ -924,7 +997,7 @@ class DownloadManager:
                     task.status = "paused"
                     task.speed = 0.0
                     task.eta = 0
-                    task.detail = "Duraklatıldı"
+                    task.detail = t("task.status.paused")
                     task.updated_at = now()
                 self._save_locked()
             log.info("Görev duraklatıldı: %s", task_id)
@@ -941,7 +1014,7 @@ class DownloadManager:
                     task.status = "canceled"
                     task.speed = 0.0
                     task.eta = 0
-                    task.detail = "İptal edildi"
+                    task.detail = t("task.status.canceled")
                     task.auto_resume = False
                     task.updated_at = now()
                 self._cleanup_parts(task_id)
@@ -956,7 +1029,7 @@ class DownloadManager:
                     task.error = str(exc)
                     task.speed = 0.0
                     task.eta = 0
-                    task.detail = "Hata"
+                    task.detail = t("task.status.error")
                     task.updated_at = now()
                 self._save_locked()
             log.warning("Görev hatası %s: %s", task_id, exc)
@@ -970,7 +1043,7 @@ class DownloadManager:
                     task.error = f"Beklenmeyen hata: {exc}"
                     task.speed = 0.0
                     task.eta = 0
-                    task.detail = "Hata"
+                    task.detail = t("task.status.error")
                     task.updated_at = now()
                 self._save_locked()
 
@@ -989,11 +1062,14 @@ class DownloadManager:
         action = str(self.config.get("shutdown_on_finish", "none") or "none")
         if action not in {"shutdown", "suspend"}:
             return
+        if self._finish_action_done:
+            return
         remaining = [
             t for t in self.tasks.values()
-            if t.status in ACTIVE_STATUSES or t.status == "queued"
+            if t.status in ACTIVE_STATUSES or t.status in {"queued", "paused"}
         ]
         if not remaining:
+            self._finish_action_done = True
             log.info("Tüm indirmeler tamamlandı, kapanış eylemi uygulanıyor: %s", action)
             cmd = ["systemctl", "poweroff"] if action == "shutdown" else ["systemctl", "suspend"]
             try:
@@ -1035,10 +1111,10 @@ class DownloadManager:
                     task.auto_resume = True
                     if task.status == "queued":
                         task.status = "paused"
-                        task.detail = "Uygulama kapatıldı"
+                        task.detail = t("task.detail.app_closed")
                     elif task.status in ACTIVE_STATUSES:
                         task.status = "pausing"
-                        task.detail = "Uygulama kapatılıyor"
+                        task.detail = t("task.detail.app_closing")
                         self.pause_requested.add(task.id)
                         controller = self.controllers.get(task.id)
                         if controller is not None:

@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from .config import API_HOST, API_PORT, VERSION
+from .config import API_HOST, API_PORT
 from .manager import DownloadManager
 
 log = logging.getLogger("videoavci.api")
@@ -21,6 +22,23 @@ ALLOWED_ORIGIN_PREFIXES = (
     "safari-web-extension://",
     "safari-extension://",
 )
+ALLOWED_HOSTS = {
+    API_HOST,
+    "localhost",
+    f"{API_HOST}:{API_PORT}",
+    f"localhost:{API_PORT}",
+}
+
+
+def host_allowed(value: str | None) -> bool:
+    """Yalnızca yerel köprü adresine yapılan istekleri kabul et.
+
+    Host başlığını doğrulamak, DNS yeniden bağlama (rebinding) saldırılarına
+    karşı ek bir koruma katmanı sağlar.
+    """
+    if not value:
+        return True
+    return value.strip().lower() in ALLOWED_HOSTS
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -95,6 +113,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._send_json(403, {"ok": False, "error": "Bu kaynaktan erişim izinli değil."})
         return False
 
+    def _check_host(self) -> bool:
+        if host_allowed(self.headers.get("Host")):
+            return True
+        self._send_json(403, {"ok": False, "error": "Geçersiz Host başlığı."})
+        return False
+
     def _read_json(self) -> dict[str, Any] | None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -118,7 +142,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     # -------------------------------------------------------------------- routes
     def do_OPTIONS(self) -> None:
-        if not self._check_origin():
+        if not self._check_host() or not self._check_origin():
             return
         self.send_response(204)
         for key, value in self._cors_headers().items():
@@ -127,7 +151,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        if not self._check_origin():
+        if not self._check_host() or not self._check_origin():
             return
         path = urlparse(self.path).path.rstrip("/") or "/"
         if path == "/api/health" or path == "/api/ping":
@@ -147,7 +171,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"ok": False, "error": "Bulunamadı."})
 
     def do_POST(self) -> None:
-        if not self._check_origin():
+        if not self._check_host() or not self._check_origin():
             return
         path = urlparse(self.path).path.rstrip("/")
         payload = self._read_json()
@@ -198,7 +222,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"ok": False, "error": "Bulunamadı."})
 
     def do_DELETE(self) -> None:
-        if not self._check_origin():
+        if not self._check_host() or not self._check_origin():
             return
         path = urlparse(self.path).path.rstrip("/")
         if path == "/api/captures":
@@ -220,6 +244,11 @@ class ApiHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ dashboard
     def _dashboard_html(self) -> str:
         health = self.manager.health()
+        version = escape(str(health.get("version") or ""))
+        ytdlp = escape(str(health.get("ytdlp") or ""))
+        active = escape(str(health.get("active") or 0))
+        captures = escape(str(health.get("captures") or 0))
+        download_dir = escape(str(health.get("download_dir") or ""))
         return f"""<!doctype html>
 <html lang="tr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -235,12 +264,12 @@ code{{background:#0f1117;border:1px solid #2a3040;border-radius:7px;padding:3px 
 <p class="ok">● Yerel köprü çalışıyor</p>
 <p class="muted">Tarayıcı eklentisi bu adrese bağlanarak videoları uygulamaya gönderir.
 Bu sayfayı kapatabilirsiniz.</p>
-<div class="row"><span>Sürüm</span><b>{health.get('version')}</b></div>
-<div class="row"><span>yt-dlp</span><b>{health.get('ytdlp')}</b></div>
-<div class="row"><span>Aktif indirme</span><b>{health.get('active')}</b></div>
-<div class="row"><span>Yakalanan video</span><b>{health.get('captures')}</b></div>
-<div class="row"><span>İndirme klasörü</span><b style="max-width:320px;overflow:hidden;text-overflow:ellipsis">{health.get('download_dir')}</b></div>
-<p class="muted">API: <code>http://{API_HOST}:{API_PORT}/api/health</code></p>
+<div class="row"><span>Sürüm</span><b>{version}</b></div>
+<div class="row"><span>yt-dlp</span><b>{ytdlp}</b></div>
+<div class="row"><span>Aktif indirme</span><b>{active}</b></div>
+<div class="row"><span>Yakalanan video</span><b>{captures}</b></div>
+<div class="row"><span>İndirme klasörü</span><b style="max-width:320px;overflow:hidden;text-overflow:ellipsis">{download_dir}</b></div>
+<p class="muted">API: <code>http://{escape(API_HOST)}:{escape(str(API_PORT))}/api/health</code></p>
 </div></body></html>"""
 
 

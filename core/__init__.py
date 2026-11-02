@@ -1,3 +1,3 @@
 """Abrek Download çekirdek paketi."""
 
-__version__ = "1.0.0"
+from .config import VERSION as __version__

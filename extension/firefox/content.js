@@ -22,6 +22,20 @@
     }
   }
 
+  function request(message) {
+    // Firefox ve Chrome'da geri çağırma yerine Promise kullan. Firefox'ta
+    // callback verilmezse Promise döner; callback'e bağlı kalmak menünün
+    // "Yükleniyor…" durumunda kalmasına yol açıyordu.
+    try {
+      const result = ext.runtime.sendMessage(message);
+      return result && typeof result.then === 'function'
+        ? result
+        : Promise.resolve(result);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
   function collect() {
     const urls = new Set();
     for (const element of document.querySelectorAll('video, audio, source')) {
@@ -106,7 +120,7 @@
     menu.appendChild(loading);
     document.body.appendChild(menu);
 
-    ext.runtime.sendMessage({ type: 'get-media' }, (resp) => {
+    const render = (resp) => {
       menu.innerHTML = '';
       let items = (resp && Array.isArray(resp.items)) ? resp.items : [];
       if (!items.length) {
@@ -160,14 +174,15 @@
           btn.style.borderRadius = '4px';
           btn.addEventListener('click', () => {
             removeMenu();
-            ext.runtime.sendMessage({ type: 'download-url', url: item.url, quality: opt.q });
+            request({ type: 'download-url', url: item.url, quality: opt.q }).catch(() => {});
           });
           actions.appendChild(btn);
         }
         row.appendChild(actions);
         menu.appendChild(row);
       }
-    });
+    };
+    request({ type: 'get-media' }).then(render).catch(() => render(null));
   }
 
   function wrapVideo(video) {

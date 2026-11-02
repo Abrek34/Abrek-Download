@@ -151,6 +151,9 @@ class TaskCard(tk.Frame):
         self._signature: tuple | None = None
         self._percent = 0.0
         self._progress_color = ACCENT
+        self._ui_cache: dict[str, dict] = {}
+        self._drawn_progress: tuple | None = None
+        self._icon_status = ""
 
         header = tk.Frame(self, bg=CARD)
         header.pack(fill="x", padx=16, pady=(14, 0))
@@ -226,15 +229,25 @@ class TaskCard(tk.Frame):
         self.update_data(data)
 
     # ------------------------------------------------------------------ güncelle
+    def _configure(self, widget: tk.Widget, key: str, **options) -> None:
+        """Yalnızca değeri değişen seçenekleri uygula (gereksiz çizimi önler)."""
+        if self._ui_cache.get(key) == options:
+            return
+        widget.configure(**options)
+        self._ui_cache[key] = options
+
     def update_data(self, data: dict) -> None:
         self.data = data
         status = str(data.get("status") or "queued")
         color = status_color(status)
 
-        draw_status_icon(self.icon, status)
-        self.title_label.configure(text=ellipsize(data.get("display_title") or "Video", 84))
-        if status == "completed" and data.get("filepath"):
-            self.title_label.configure(cursor="hand2")
+        if status != self._icon_status:
+            self._icon_status = status
+            draw_status_icon(self.icon, status)
+
+        title = ellipsize(data.get("display_title") or "Video", 84)
+        cursor = "hand2" if status == "completed" and data.get("filepath") else ""
+        self._configure(self.title_label, "title", text=title, cursor=cursor)
 
         meta_parts = [
             data.get("host") or "",
@@ -242,10 +255,16 @@ class TaskCard(tk.Frame):
             human_duration(data.get("duration")) or "",
             data.get("extractor") or "",
         ]
-        self.meta_label.configure(text="   ·   ".join(part for part in meta_parts if part))
+        self._configure(
+            self.meta_label,
+            "meta",
+            text="   ·   ".join(part for part in meta_parts if part),
+        )
 
         status_text = data.get("status_label") or t(f"task.status.{status}")
-        self.status_label.configure(
+        self._configure(
+            self.status_label,
+            "status",
             text=status_text,
             bg=status_tint(status),
             fg=color,
@@ -257,9 +276,18 @@ class TaskCard(tk.Frame):
         self._progress_color = color
         self._draw_progress()
 
-        self.info_label.configure(text=self._info_text(data, status))
-        self.info_label.configure(fg=RED if status == "error" else TEXT_DIM)
-        self.percent_label.configure(text=f"%{self._percent:.0f}", fg=color)
+        self._configure(
+            self.info_label,
+            "info",
+            text=self._info_text(data, status),
+            fg=RED if status == "error" else TEXT_DIM,
+        )
+        self._configure(
+            self.percent_label,
+            "percent",
+            text=f"%{self._percent:.0f}",
+            fg=color,
+        )
         self._update_buttons(status, bool(data.get("filepath")), bool(data.get("error")))
 
     def _info_text(self, data: dict, status: str) -> str:
@@ -304,7 +332,17 @@ class TaskCard(tk.Frame):
         return ellipsize(detail or t("task.status.canceled"), 120)
 
     def _draw_progress(self) -> None:
-        draw_progress(self.progress, self._percent, self._progress_color)
+        percent = round(self._percent, 1)
+        key = (
+            percent,
+            self._progress_color,
+            max(1, self.progress.winfo_width()),
+            max(1, self.progress.winfo_height()),
+        )
+        if key == self._drawn_progress:
+            return
+        self._drawn_progress = key
+        draw_progress(self.progress, percent, self._progress_color)
 
     def _update_buttons(self, status: str, has_file: bool, has_error: bool) -> None:
         signature = (status, has_file, has_error)
@@ -577,6 +615,24 @@ def show_details_dialog(parent: tk.Misc, data: dict) -> None:
     footer = tk.Frame(window, bg=BG)
     footer.pack(fill="x", padx=22, pady=(0, 20))
     make_button(footer, t("details.close"), window.destroy, kind="subtle", size=9).pack(side="right")
+
+    copy_button = make_button(footer, t("details.copy_url"), None, kind="ghost", size=9, bg=BG)
+    copy_button.pack(side="right", padx=(0, 8))
+
+    def copy_url() -> None:
+        url = str(data.get("url") or "")
+        if not url:
+            return
+        try:
+            window.clipboard_clear()
+            window.clipboard_append(url)
+            copy_button.configure(text=t("details.copied"))
+            window.after(1800, lambda: copy_button.configure(text=t("details.copy_url")))
+        except tk.TclError:
+            pass
+
+    copy_button.configure(command=copy_url)
+    window.bind("<Escape>", lambda _event: window.destroy())
 
     window.update_idletasks()
     try:

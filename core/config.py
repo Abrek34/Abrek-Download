@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.5.1"
+VERSION = "1.8.0"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -38,7 +38,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "speed_limit_kbps": 0,
     "cookies_browser": "none",
     "auto_resume": True,
-    "auto_send_captures": True,
     "notify_captures": True,
     "notify_downloads": True,
     "window_geometry": "",

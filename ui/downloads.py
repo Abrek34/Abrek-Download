@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -60,6 +61,7 @@ class DownloadsPage(tk.Frame):
         self._filter_buttons: dict[str, tk.Button] = {}
         self._tasks: list[dict] = []
         self._search_query = ""
+        self._checking_playlist = False
         self._build()
 
     # ------------------------------------------------------------------ kurulum
@@ -178,12 +180,15 @@ class DownloadsPage(tk.Frame):
         actions.pack(side="right")
         make_button(actions, t("downloads.pause_all"), self.pause_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
         make_button(actions, t("downloads.resume_all"), self.resume_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
+        make_button(actions, t("downloads.retry_failed"), self.retry_failed, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
         make_button(actions, t("downloads.clear_finished"), self.clear_finished, kind="ghost", size=8, bg=BG).pack(side="left")
 
         self._paint_filters()
 
     # ------------------------------------------------------------------ eylemler
     def add_download(self) -> None:
+        if self._checking_playlist:
+            return
         url = self.url_entry.value()
         if not url:
             self.app.toast(t("downloads.toast.no_url"), "warning")
@@ -192,28 +197,58 @@ class DownloadsPage(tk.Frame):
         label = self.quality_combo.get()
         quality = LABEL_TO_QUALITY.get(label, "best")
 
+        # Ağ isteği Tk ana iş parçacığını kilitlememeli; liste kontrolünü
+        # arka planda yapıp sonucu ``app.post`` ile arayüze taşı.
         if "list=" in url or "playlist" in url.lower():
-            try:
-                playlist_info = self.app.manager.check_playlist(url)
-                if playlist_info and playlist_info.get("items") and len(playlist_info["items"]) > 1:
-                    count = len(playlist_info["items"])
-                    title = playlist_info.get("title") or "Oynatma Listesi"
-                    ans = messagebox.askyesnocancel(
-                        t("downloads.playlist_dialog_title"),
-                        t("downloads.playlist_dialog_msg", title=title, count=count),
-                        parent=self,
-                    )
-                    if ans is True:
-                        added = self.app.manager.add_playlist_items(playlist_info["items"], quality=quality)
-                        self.app.toast(t("downloads.toast.playlist_queued", count=added), "success")
-                        self.url_entry.clear()
-                        self.app.refresh_now()
-                        return
-                    elif ans is None:
-                        return
-            except Exception:
-                pass
+            self._check_playlist_async(url, quality)
+            return
+        self._queue_url(url, quality)
 
+    def _check_playlist_async(self, url: str, quality: str) -> None:
+        self._checking_playlist = True
+        self.add_button.configure(state="disabled", text=t("downloads.checking_playlist"))
+
+        def worker() -> None:
+            try:
+                info = self.app.manager.check_playlist(url)
+            except Exception:
+                info = None
+            self.app.post(lambda: self._playlist_result(url, quality, info))
+
+        threading.Thread(
+            target=worker,
+            name="videoavci-playlist-check",
+            daemon=True,
+        ).start()
+
+    def _playlist_result(self, url: str, quality: str, info: dict | None) -> None:
+        self._checking_playlist = False
+        try:
+            self.add_button.configure(state="normal", text=t("downloads.download"))
+        except tk.TclError:
+            return
+        try:
+            items = list((info or {}).get("items") or [])
+            if len(items) > 1:
+                title = (info or {}).get("title") or t("downloads.playlist_default_title")
+                ans = messagebox.askyesnocancel(
+                    t("downloads.playlist_dialog_title"),
+                    t("downloads.playlist_dialog_msg", title=title, count=len(items)),
+                    parent=self,
+                )
+                if ans is True:
+                    added = self.app.manager.add_playlist_items(items, quality=quality)
+                    self.app.toast(t("downloads.toast.playlist_queued", count=added), "success")
+                    self.url_entry.clear()
+                    self.app.refresh_now()
+                    return
+                if ans is None:
+                    return
+        except Exception:
+            pass
+        self._queue_url(url, quality)
+
+    def _queue_url(self, url: str, quality: str) -> None:
         try:
             task, duplicate = self.app.manager.add_url(url, quality=quality)
         except ValueError as exc:
@@ -268,6 +303,14 @@ class DownloadsPage(tk.Frame):
         self.app.toast(t("downloads.toast.all_resumed"), "success")
         self.app.refresh_now()
 
+    def retry_failed(self) -> None:
+        count = self.app.manager.retry_failed()
+        if count:
+            self.app.toast(t("downloads.toast.retry_failed", count=count), "success")
+        else:
+            self.app.toast(t("downloads.toast.no_failed"), "info")
+        self.app.refresh_now()
+
     def clear_finished(self) -> None:
         if not messagebox.askyesno(
             t("downloads.confirm_clear_title"),
@@ -310,11 +353,14 @@ class DownloadsPage(tk.Frame):
             ]
 
         if self._filter == "active":
-            filtered = [t_item for t_item in tasks if t_item.get("status") not in {"completed", "error", "canceled"}]
+            filtered = [
+                t_item for t_item in filtered
+                if t_item.get("status") not in {"completed", "error", "canceled"}
+            ]
         elif self._filter == "completed":
-            filtered = [t_item for t_item in tasks if t_item.get("status") == "completed"]
+            filtered = [t_item for t_item in filtered if t_item.get("status") == "completed"]
         elif self._filter == "error":
-            filtered = [t_item for t_item in tasks if t_item.get("status") == "error"]
+            filtered = [t_item for t_item in filtered if t_item.get("status") == "error"]
 
         filtered = sorted(
             filtered,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import tkinter as tk
 import urllib.error
@@ -39,6 +40,7 @@ from .widgets import ScrollFrame
 
 CHROME_DIR = PROJECT_DIR / "extension" / "chrome"
 FIREFOX_DIR = PROJECT_DIR / "extension" / "firefox"
+FIREFOX_HELPER = PROJECT_DIR / "firefox-eklenti.sh"
 
 
 class ExtensionPage(tk.Frame):
@@ -83,6 +85,8 @@ class ExtensionPage(tk.Frame):
                 t("extension.firefox_step3"),
             ],
             t("extension.firefox_note"),
+            action_label=t("extension.firefox_helper"),
+            action_command=self.open_firefox_helper,
         )
         self._build_test_card(content)
         self._build_note(content)
@@ -135,6 +139,8 @@ class ExtensionPage(tk.Frame):
         path,
         steps: list[str],
         note: str,
+        action_label: str = "",
+        action_command=None,
     ) -> None:
         card = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
         card.pack(fill="x", pady=(0, 14))
@@ -192,6 +198,19 @@ class ExtensionPage(tk.Frame):
         steps_frame.pack(fill="x")
         for index, step in enumerate(steps, start=1):
             self._step(steps_frame, index, step)
+
+        if action_label and action_command is not None:
+            action_row = tk.Frame(inner, bg=CARD)
+            action_row.pack(fill="x", pady=(10, 0))
+            make_button(
+                action_row,
+                action_label,
+                action_command,
+                kind="primary",
+                size=9,
+                padx=16,
+                pady=7,
+            ).pack(side="left")
 
         tk.Label(
             inner,
@@ -291,6 +310,25 @@ class ExtensionPage(tk.Frame):
             open_path(path)
         except Exception as exc:
             self.app.toast(t("extension.folder_open_failed", error=exc), "error")
+
+    def open_firefox_helper(self) -> None:
+        if not FIREFOX_HELPER.exists():
+            self.app.toast(t("extension.firefox_helper_missing"), "error")
+            return
+
+        def worker() -> None:
+            try:
+                subprocess.Popen(
+                    [str(FIREFOX_HELPER), "--debug"],
+                    cwd=str(PROJECT_DIR),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.app.post(lambda: self.app.toast(t("extension.firefox_helper_started"), "info"))
+            except Exception as exc:
+                self.app.post(lambda error=str(exc): self.app.toast(t("extension.firefox_helper_failed", error=error), "error"))
+
+        threading.Thread(target=worker, name="videoavci-firefox-helper", daemon=True).start()
 
     def test_connection(self) -> None:
         if self._testing:
