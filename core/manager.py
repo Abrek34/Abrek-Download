@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
+from urllib.parse import urljoin
 import shutil
 import subprocess
 import sys
@@ -35,6 +38,8 @@ from .models import (
     FINISHED_STATUSES,
     make_capture,
 )
+import requests
+
 from .utils import (
     atomic_write_json,
     file_size,
@@ -316,6 +321,32 @@ class DownloadManager:
             return f"{match.group(1)}p"
         return ""
 
+    def _fetch_first_segment(self, url: str, referer: str = "") -> bytes | None:
+        headers = {
+            "Referer": referer or url,
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+        s = requests.Session()
+        current = url
+        visited: set[str] = set()
+        try:
+            while True:
+                if current in visited:
+                    return None
+                visited.add(current)
+                response = s.get(current, headers=headers, timeout=(10, 20), allow_redirects=True)
+                if response.status_code != 200:
+                    return None
+                text = response.text
+                if not text.lstrip().startswith("#EXTM3U"):
+                    return response.content
+                segments = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+                if not segments:
+                    return None
+                current = urljoin(current, segments[0])
+        except Exception:
+            return None
+
     def _schedule_probe(self, capture_id: str) -> None:
         with self.lock:
             if capture_id in self._probe_pending:
@@ -346,6 +377,69 @@ class DownloadManager:
                 referer = capture.referer or capture.page_url
                 original_kind = capture.kind
                 original_media_kind = capture.media_kind
+
+            # Önce segment indirip ffprobe ile analiz et (HLS/DASH için daha güvenilir).
+            segment_data = self._fetch_first_segment(url, referer)
+            if segment_data:
+                fd, tmp_path = tempfile.mkstemp(prefix="va_probe_", suffix=".bin")
+                try:
+                    with os.fdopen(fd, "wb") as fh:
+                        fh.write(segment_data)
+                    cmd = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", tmp_path]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+                    if result.returncode == 0 and result.stdout.strip():
+                        info = json.loads(result.stdout)
+                        streams = info.get("streams") or []
+                        has_video = any(str(s.get("codec_type")) == "video" for s in streams)
+                        has_audio = any(str(s.get("codec_type")) == "audio" for s in streams)
+                        height = 0
+                        for s in streams:
+                            if str(s.get("codec_type")) == "video":
+                                try:
+                                    height = int(s.get("height") or 0)
+                                except (TypeError, ValueError):
+                                    height = 0
+                                break
+                        if original_kind in {"hls", "dash"}:
+                            new_kind = "manifest"
+                        elif has_video and has_audio:
+                            new_kind = "av"
+                        elif has_video:
+                            new_kind = "video"
+                        elif has_audio:
+                            new_kind = "audio"
+                        else:
+                            new_kind = original_media_kind or ""
+                        media_info = ""
+                        if height:
+                            media_info = f"{height}p"
+                        elif has_audio and not has_video:
+                            media_info = "ses"
+                        if original_kind in {"hls", "dash"}:
+                            if has_audio:
+                                media_info = (media_info + " · sesli").strip() if media_info else "sesli"
+                            else:
+                                media_info = (media_info + " · sessiz").strip() if media_info else "sessiz"
+                        with self.lock:
+                            capture = next((item for item in self.captures if item.id == capture_id), None)
+                            if capture is not None:
+                                changed = False
+                                if new_kind and capture.media_kind != new_kind:
+                                    capture.media_kind = new_kind
+                                    changed = True
+                                if media_info and capture.media_info != media_info:
+                                    capture.media_info = media_info
+                                    changed = True
+                                if changed:
+                                    self._save_locked()
+                        return
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
             if not url:
                 return
             cmd = [
@@ -390,20 +484,25 @@ class DownloadManager:
                 {int(f.get("height")) for f in formats if isinstance(f.get("height"), int) and f.get("height")},
                 reverse=True,
             )
-            if heights:
+            if has_audio and not has_video:
+                media_info = "sesli"
+            elif heights:
                 if len(heights) > 1:
                     media_info = f"çoklu ({heights[0]}p)"
                 else:
                     media_info = f"{heights[0]}p"
             else:
                 media_info = self._resolution_from_url(url)
-                if not media_info and has_audio and not has_video:
-                    media_info = "ses"
+
             if original_kind in {"hls", "dash"}:
-                if has_audio:
-                    media_info = (media_info + " · sesli").strip() if media_info else "sesli"
-                else:
+                if has_audio and has_video:
+                    media_info = (media_info + " · sesli").strip() if media_info and media_info != "sesli" else "sesli"
+                elif has_audio and not has_video:
+                    media_info = "sesli"
+                elif has_video and not has_audio:
                     media_info = (media_info + " · sessiz").strip() if media_info else "sessiz"
+                else:
+                    media_info = media_info or "sessiz"
 
             if original_kind in {"hls", "dash"}:
                 new_kind = "manifest"
