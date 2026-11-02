@@ -374,9 +374,14 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
   // üretir. Aynı sayfa için daha önce yakalama varsa yenilerini ekleme; böylece
   // "Yakalananlar" listesi onlarca aynı sayfa girdisiyle dolmaz.
   const pageUrlNorm = String(pageUrl || '').toLowerCase();
-  const isInstagramSingleMedia =
-    /(^|\.)instagram\.com$/.test(new URL(pageUrl || 'http://x').hostname.replace(/^www\./, '')) &&
-    (/\/reels?\//.test(pageUrlNorm) || /\/p\//.test(pageUrlNorm));
+  let isInstagramSingleMedia = false;
+  try {
+    isInstagramSingleMedia =
+      /(^|\.)instagram\.com$/.test(new URL(pageUrl || 'http://x').hostname.replace(/^www\./, '')) &&
+      (/\/reels?\//.test(pageUrlNorm) || /\/p\//.test(pageUrlNorm));
+  } catch {
+    isInstagramSingleMedia = false;
+  }
   const item = {
     url,
     kind,
@@ -450,9 +455,6 @@ function headerValue(headers, name) {
 ext.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.tabId < 0) return;
-    const requestHeaders = details.requestHeaders || [];
-    const purpose = headerValue(requestHeaders, 'sec-purpose') || headerValue(requestHeaders, 'purpose');
-    if (/prefetch/i.test(purpose)) return;
     const isManifest = MANIFEST_EXT.test(details.url);
     if (!isManifest && details.type !== 'media') return;
     handleDetection(
@@ -466,7 +468,6 @@ ext.webRequest.onBeforeRequest.addListener(
     ).catch(() => {});
   },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
-  ['requestHeaders'],
 );
 
 ext.webRequest.onHeadersReceived.addListener(

@@ -4,7 +4,7 @@ Linux için, tarayıcı eklentisiyle çalışan bir video indirici. İnternette 
 oynatılan videoları otomatik yakalar; YouTube gibi sitelerde `yt-dlp`, doğrudan
 medya dosyalarında çok parçalı indirme motoru kullanır.
 
-Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.6**.
+Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.7**.
 
 ## Özellikler
 

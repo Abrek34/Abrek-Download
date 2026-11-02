@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.7 — 2026-11-02
+
+### Düzeltmeler
+
+- **Yakalama yeniden çalışmıyor:** eklentinin `onBeforeRequest` dinleyicisi
+  `requestHeaders` extraInfoSpec değeri Firefox'ta geçersiz olduğundan hiç
+  kaydedilmiyordu (tüm yakalama sessizce bozuluyordu). Geçersiz parametre
+  kaldırıldı; yakalama yeniden çalışıyor (test edildi).
+
 ## 1.8.6 — 2026-11-02
 
 ### Düzeltmeler
