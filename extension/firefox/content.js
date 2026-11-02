@@ -157,6 +157,11 @@
     const render = (resp) => {
       menu.innerHTML = '';
       let items = (resp && Array.isArray(resp.items)) ? resp.items : [];
+      // Medya bağlantılarını (HLS/direct) sayfa bağlantısının önüne koy.
+      items.sort((a, b) => {
+        const rank = (x) => (['direct', 'hls', 'dash'].includes(String(x.kind || '')) ? 0 : 1);
+        return rank(a) - rank(b);
+      });
       if (!items.length) {
         if (location.href.includes('youtube.com') || location.href.includes('youtu.be')) {
           const cleanTitle = document.title.replace(/\s*-\s*YouTube\s*$/i, '').trim();
@@ -186,9 +191,23 @@
           menu.appendChild(loading);
           request({ type: 'dom-media', urls: srcs }).catch(() => {});
           request({ type: 'page-info', pageUrl: location.href, pageTitle: document.title, hasVideo: true }).catch(() => {});
-          setTimeout(() => {
-            request({ type: 'get-media' }).then(render).catch(() => render(null));
-          }, 1500);
+
+          let retries = 0;
+          const retry = () => {
+            retries += 1;
+            request({ type: 'get-media' }).then((resp) => {
+              const items = (resp && Array.isArray(resp.items)) ? resp.items : [];
+              if (items.length || retries >= 4) {
+                render(resp);
+              } else {
+                setTimeout(retry, 1500);
+              }
+            }).catch(() => {
+              if (retries >= 4) render(null);
+              else setTimeout(retry, 1500);
+            });
+          };
+          setTimeout(retry, 1500);
           return;
         }
       }

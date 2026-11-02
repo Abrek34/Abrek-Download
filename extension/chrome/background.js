@@ -208,7 +208,7 @@ async function checkAndAddVideoPage(tabId, pageUrl, pageTitle, hasVideo = false)
 
 function classify(contentType, url) {
   const ct = String(contentType || '').toLowerCase().split(';')[0].trim();
-  if (/\.m3u8(?:$|[?#])/i.test(url) || ct.includes('mpegurl')) return 'hls';
+  if (/\.m3u8(?:$|[?#])/i.test(url) || /\/m3u\//i.test(url) || ct.includes('mpegurl')) return 'hls';
   if (/\.mpd(?:$|[?#])/i.test(url) || ct.includes('dash+xml')) return 'dash';
   if (ct.startsWith('video/') || ct.startsWith('audio/') || MEDIA_EXT.test(url)) return 'direct';
   // Bazı CDN'ler video/mp4 yerine application/octet-stream döner; uzantı varsa yakala.
@@ -367,9 +367,17 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
   // Film siteleri videoyu octet-stream veya uzantısız URL ile sunabilir.
   if (!kind) {
     const ct = String(contentType || '').toLowerCase();
-    if (ct.includes('octet-stream') || ct.includes('binary') || ct === '') {
-      if (/video|stream|play|master|playlist|media|cdn|m3u8|mpd/i.test(url)) kind = 'direct';
+    if (ct.includes('octet-stream') || ct.includes('binary') || ct === '' || ct.includes('text/plain')) {
+      if (/video|stream|play|master|playlist|media|cdn|m3u8|m3u|mpd/i.test(url)) kind = 'direct';
     }
+  }
+  // /m3u/ yolu manifest (HLS) olarak değerlendir.
+  if (!kind && /\/m3u\//i.test(url)) kind = 'hls';
+  // vidmixi gibi oynatıcı hostlarından gelen istekleri medya olarak değerlendir.
+  if (!kind) {
+    try {
+      if (/vidmixi\.com/i.test(new URL(url).hostname)) kind = 'direct';
+    } catch {}
   }
   if (!kind) return;
   if (kind === 'direct') {
@@ -466,7 +474,7 @@ function headerValue(headers, name) {
 ext.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.tabId < 0) return;
-    const isManifest = MANIFEST_EXT.test(details.url);
+    const isManifest = MANIFEST_EXT.test(details.url) || /\/m3u\//i.test(details.url);
     if (!isManifest && details.type !== 'media') return;
     handleDetection(
       details.tabId,
@@ -490,9 +498,9 @@ ext.webRequest.onHeadersReceived.addListener(
     const size = parseInt(headerValue(headers, 'content-length'), 10) || 0;
     const purpose = headerValue(headers, 'sec-purpose') || headerValue(headers, 'purpose') || headerValue(headers, 'x-purpose');
     if (/prefetch/i.test(purpose)) return;
-    const isManifestUrl = MANIFEST_EXT.test(details.url);
+    const isManifestUrl = MANIFEST_EXT.test(details.url) || /\/m3u\//i.test(details.url);
     const isMediaUrl = MEDIA_EXT.test(details.url);
-    const looksLikeVideoPath = /video|stream|play|master|playlist|media|cdn|m3u8|mpd/i.test(details.url);
+    const looksLikeVideoPath = /video|stream|play|master|playlist|media|cdn|m3u8|m3u|mpd/i.test(details.url);
     const ctLower = String(contentType || '').toLowerCase();
     const isVideoCt = ctLower.startsWith('video/') || ctLower.startsWith('audio/') ||
       ctLower.includes('mpegurl') || ctLower.includes('dash+xml') ||
@@ -503,7 +511,7 @@ ext.webRequest.onHeadersReceived.addListener(
         ctLower.includes('image/')) return;
     // Çok küçük ve video olmayan yanıtları atla.
     if (size > 0 && size < MIN_DIRECT_SIZE && !isVideoCt && !isManifestUrl && !contentRange) return;
-    if (!isManifestUrl && !isMediaUrl && !isVideoCt && !looksLikeVideoPath) return;
+    if (!isManifestUrl && !isMediaUrl && !isVideoCt && !looksLikeVideoPath && !/vidmixi\.com/i.test(details.url)) return;
     handleDetection(
       details.tabId,
       details.url,

@@ -1,5 +1,15 @@
 # Sürüm Notları
 
+## 1.8.12 — 2026-11-02
+
+### Düzeltmeler
+
+- **Film sitelerinde indirme hatası:** ⬇ menüsü ilk yakalamayı (sayfa
+  bağlantısı) hemen gösteriyordu; gerçek video bağlantısı (m3u8) birkaç saniye
+  sonra yakalanıyordu. Menü artık birkaç saniye bekleyip medya bağlantısını
+  önceliklendiriyor; medya bağlantısı varsa sayfa bağlantısı ikinci planda
+  kalıyor.
+
 ## 1.8.11 — 2026-11-02
 
 ### Düzeltmeler
