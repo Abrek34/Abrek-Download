@@ -331,6 +331,7 @@ class TaskCard(tk.Frame):
             if has_file:
                 actions.append(("Oynat", "open", "primary"))
                 actions.append(("Klasör", "folder", "ghost"))
+            actions.append(("Yeniden indir", "redownload", "ghost"))
             actions.append(("Kaldır", "remove", "ghost"))
 
         for text, action, kind in reversed(actions):
@@ -361,6 +362,8 @@ class TaskCard(tk.Frame):
             self.app.open_task_file(task_id)
         elif action == "folder":
             self.app.open_task_folder(task_id)
+        elif action == "redownload":
+            self.app.redownload_task(task_id)
         elif action == "details":
             self.app.show_task_details(task_id)
 

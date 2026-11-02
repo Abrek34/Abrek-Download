@@ -214,6 +214,13 @@ class SettingsPage(tk.Frame):
             text="Yeni video yakalandığında masaüstü bildirimi göster",
             variable=self.notify_var,
             style="TCheckbutton",
+        ).pack(fill="x", pady=(0, 6))
+        self.notify_downloads_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            body,
+            text="İndirme tamamlandığında masaüstü bildirimi göster",
+            variable=self.notify_downloads_var,
+            style="TCheckbutton",
         ).pack(fill="x", pady=(0, 12))
 
         row = self._row(
@@ -314,6 +321,7 @@ class SettingsPage(tk.Frame):
         self.speed_entry.insert(0, str(config.get("speed_limit_kbps", 0)))
         self.auto_resume_var.set(bool(config.get("auto_resume", True)))
         self.notify_var.set(bool(config.get("notify_captures", True)))
+        self.notify_downloads_var.set(bool(config.get("notify_downloads", True)))
         cookies = str(config.get("cookies_browser", "none") or "none")
         self.cookies_combo.set(COOKIE_TO_LABEL.get(cookies, COOKIE_TO_LABEL["none"]))
         self.refresh_ytdlp_version()
@@ -379,6 +387,7 @@ class SettingsPage(tk.Frame):
                 "cookies_browser": cookies,
                 "auto_resume": bool(self.auto_resume_var.get()),
                 "notify_captures": bool(self.notify_var.get()),
+                "notify_downloads": bool(self.notify_downloads_var.get()),
             }
         )
         self.save_status.configure(text="Ayarlar kaydedildi.", fg=GREEN)

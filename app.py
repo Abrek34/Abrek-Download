@@ -119,6 +119,7 @@ class VideoAvciApp(tk.Tk):
         self._active_page = "downloads"
         self._nav_counts = {"downloads": 0, "captures": 0}
         self._toast_after = None
+        self._notified_completed: set[str] = set()
 
         self.title("Abrek Download — Video İndirici")
         self.configure(bg=BG)
@@ -491,6 +492,7 @@ class VideoAvciApp(tk.Tk):
         self._nav_counts["captures"] = int(snapshot.get("capture_count") or 0)
         self._paint_nav()
         self._maybe_notify(snapshot)
+        self._maybe_notify_downloads(tasks)
 
     def _maybe_notify(self, snapshot: dict) -> None:
         count = int(snapshot.get("capture_count") or 0)
@@ -514,6 +516,30 @@ class VideoAvciApp(tk.Tk):
             )
         except Exception:
             log.debug("Bildirim gönderilemedi", exc_info=True)
+
+    def _maybe_notify_downloads(self, tasks: list[dict]) -> None:
+        if not self.cfg.get("notify_downloads", True):
+            return
+        if not shutil.which("notify-send"):
+            return
+        for task in tasks:
+            task_id = str(task.get("id") or "")
+            if not task_id or task.get("status") != "completed":
+                continue
+            if task_id in self._notified_completed:
+                continue
+            self._notified_completed.add(task_id)
+            title = str(task.get("display_title") or task.get("title") or "İndirme")[:140]
+            filepath = str(task.get("filepath") or "")
+            body = filepath or "İndirme tamamlandı."
+            try:
+                subprocess.Popen(
+                    ["notify-send", "-a", APP_NAME, "İndirme tamamlandı", f"{title}\n{body}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                log.debug("İndirme bildirimi gönderilemedi", exc_info=True)
 
     # ------------------------------------------------------------------ köprü
     def _paint_api_status(self, ok: bool) -> None:
@@ -574,6 +600,29 @@ class VideoAvciApp(tk.Tk):
 
     def retry_task(self, task_id: str) -> None:
         self.manager.retry_task(task_id)
+        self.refresh_now()
+
+    def redownload_task(self, task_id: str) -> None:
+        task = self.manager.get_task(task_id)
+        if task is None:
+            self.toast("Görev bulunamadı.", "warning")
+            return
+        try:
+            new_task, duplicate = self.manager.add_url(
+                task.url,
+                quality=task.quality,
+                kind=task.kind or "auto",
+                title=task.title,
+                page_url=task.page_url,
+                referer=task.referer,
+            )
+        except Exception as exc:
+            self.toast(f"Yeniden indirilemedi: {exc}", "error")
+            return
+        if duplicate:
+            self.toast("Bu bağlantı zaten kuyrukta.", "warning")
+        else:
+            self.toast(f"Kuyruğa eklendi: {new_task.display_title()}", "success")
         self.refresh_now()
 
     def remove_task(self, task_id: str) -> None:

@@ -36,6 +36,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_resume": True,
     "auto_send_captures": True,
     "notify_captures": True,
+    "notify_downloads": True,
     "window_geometry": "",
 }
 
