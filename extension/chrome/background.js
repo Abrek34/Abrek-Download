@@ -125,6 +125,71 @@ function shouldIgnore(url) {
   return false;
 }
 
+function isVideoPageUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      return u.pathname === '/watch' || u.pathname.startsWith('/shorts/') || u.pathname.startsWith('/live/');
+    }
+    if (host === 'youtu.be') return true;
+    if (host === 'vimeo.com') return /^\/\d+/.test(u.pathname);
+    if (host === 'dailymotion.com') return u.pathname.startsWith('/video/');
+    if (host === 'tiktok.com') return u.pathname.includes('/video/');
+    if (host === 'twitter.com' || host === 'x.com') return u.pathname.includes('/status/');
+    if (host === 'instagram.com') return u.pathname.startsWith('/reel/') || u.pathname.startsWith('/p/');
+  } catch {}
+  return false;
+}
+
+async function checkAndAddVideoPage(tabId, pageUrl, pageTitle) {
+  if (!isVideoPageUrl(pageUrl)) return;
+  await withLock(`tab:${tabId}`, async () => {
+    const record = await readTab(tabId);
+    record.pageUrl = pageUrl;
+    if (pageTitle) record.pageTitle = pageTitle;
+
+    const existing = record.items.find((item) => item.url === pageUrl);
+    const cleanTitle = (pageTitle || record.pageTitle || 'YouTube Video').replace(/\s*-\s*YouTube\s*$/i, '').trim();
+
+    if (!existing) {
+      const item = {
+        url: pageUrl,
+        pageUrl: pageUrl,
+        pageTitle: cleanTitle,
+        title: cleanTitle,
+        kind: 'page',
+        label: pageUrl.includes('youtu') ? 'YOUTUBE' : 'SAYFA',
+        contentType: 'text/html',
+        size: 0,
+        referer: pageUrl,
+        tabId: tabId,
+        sent: false,
+      };
+      record.items.unshift(item);
+      record.items = record.items.slice(0, MAX_ITEMS_PER_TAB);
+      await writeTab(tabId, record);
+      await setBadge(tabId, record.items.length);
+
+      const settings = await readSettings();
+      if (settings.autoSend !== false) {
+        try {
+          await postJson('/api/captures', item);
+          item.sent = true;
+          await writeTab(tabId, record);
+        } catch {
+          await pushPending(item);
+        }
+      }
+    } else if (cleanTitle && (!existing.title || existing.title === 'YouTube Video')) {
+      existing.title = cleanTitle;
+      existing.pageTitle = cleanTitle;
+      await writeTab(tabId, record);
+    }
+  });
+}
+
 function classify(contentType, url) {
   const ct = String(contentType || '').toLowerCase().split(';')[0].trim();
   if (ct.includes('mpegurl') || /\.m3u8(?:$|[?#])/i.test(url)) return 'hls';
@@ -396,16 +461,18 @@ ext.tabs.onRemoved.addListener((tabId) => {
   call(ext.storage.local.remove.bind(ext.storage.local), tabKey(tabId)).catch(() => {});
 });
 
-ext.tabs.onUpdated.addListener((tabId, changeInfo) => {
+ext.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url) {
     tabInfoCache.delete(tabId);
     withLock(`tab:${tabId}`, async () => {
       const record = await readTab(tabId);
       record.pageUrl = changeInfo.url;
-      record.pageTitle = changeInfo.title || '';
+      record.pageTitle = changeInfo.title || (tab && tab.title) || '';
       record.items = [];
       await writeTab(tabId, record);
       await setBadge(tabId, 0);
+    }).then(() => {
+      checkAndAddVideoPage(tabId, changeInfo.url, changeInfo.title || (tab && tab.title) || '').catch(() => {});
     }).catch(() => {});
   } else if (changeInfo.title) {
     tabInfoCache.delete(tabId);
@@ -413,6 +480,9 @@ ext.tabs.onUpdated.addListener((tabId, changeInfo) => {
       const record = await readTab(tabId);
       record.pageTitle = changeInfo.title;
       await writeTab(tabId, record);
+    }).then(() => {
+      const url = (tab && tab.url) || '';
+      if (url) checkAndAddVideoPage(tabId, url, changeInfo.title).catch(() => {});
     }).catch(() => {});
   }
 });
@@ -444,7 +514,10 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await writeTab(tabId, record);
       await setBadge(tabId, record.items.length);
     })
-      .then(() => sendResponse({ ok: true }))
+      .then(() => {
+        checkAndAddVideoPage(tabId, message.pageUrl || (tab && tab.url) || '', message.pageTitle || (tab && tab.title) || '').catch(() => {});
+        sendResponse({ ok: true });
+      })
       .catch(() => sendResponse({ ok: false }));
     return true;
   }

@@ -108,7 +108,17 @@
 
     ext.runtime.sendMessage({ type: 'get-media' }, (resp) => {
       menu.innerHTML = '';
-      const items = (resp && Array.isArray(resp.items)) ? resp.items : [];
+      let items = (resp && Array.isArray(resp.items)) ? resp.items : [];
+      if (!items.length) {
+        if (location.href.includes('youtube.com') || location.href.includes('youtu.be')) {
+          const cleanTitle = document.title.replace(/\s*-\s*YouTube\s*$/i, '').trim();
+          items = [{
+            url: location.href,
+            label: 'YOUTUBE',
+            title: cleanTitle || 'YouTube Video',
+          }];
+        }
+      }
       if (!items.length) {
         const empty = document.createElement('div');
         empty.className = 'va-empty';
@@ -163,7 +173,7 @@
   function wrapVideo(video) {
     if (video.dataset.vaWrapped) return;
     video.dataset.vaWrapped = '1';
-    const parent = video.parentElement;
+    let parent = video.closest('#movie_player') || video.parentElement;
     if (!parent) return;
     const pos = getComputedStyle(parent).position;
     if (pos === 'static') parent.style.position = 'relative';
@@ -172,6 +182,7 @@
     btn.className = 'va-dl-btn';
     btn.textContent = '⬇';
     btn.title = 'Abrek Download ile indir';
+    btn.style.zIndex = '2147483647';
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -183,6 +194,8 @@
     const hide = () => { btn.style.opacity = '0'; };
     video.addEventListener('mouseenter', show);
     video.addEventListener('mouseleave', hide);
+    parent.addEventListener('mouseenter', show);
+    parent.addEventListener('mouseleave', hide);
     btn.addEventListener('mouseenter', show);
     btn.addEventListener('mouseleave', hide);
   }
@@ -200,6 +213,22 @@
     // sessizce geç
   }
   setInterval(scanVideos, 4000);
+
+  // YouTube ve SPA sayfa geçişleri dinleyicisi
+  window.addEventListener('yt-navigate-finish', () => {
+    seen.clear();
+    setTimeout(() => {
+      collect();
+      scanVideos();
+    }, 700);
+  });
+  window.addEventListener('popstate', () => {
+    seen.clear();
+    setTimeout(() => {
+      collect();
+      scanVideos();
+    }, 700);
+  });
 
   document.addEventListener('click', (e) => {
     const m = document.getElementById(MENU_ID);

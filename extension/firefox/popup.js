@@ -199,7 +199,7 @@ function renderItem(item) {
   top.className = 'item-top';
   const kind = document.createElement('span');
   kind.className = `kind ${item.kind || 'direct'}`;
-  kind.textContent = kindLabel(item.kind);
+  kind.textContent = item.label || kindLabel(item.kind);
   const size = document.createElement('span');
   size.className = 'size';
   size.textContent = formatSize(item.size);
