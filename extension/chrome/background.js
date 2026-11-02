@@ -135,11 +135,14 @@ function classify(contentType, url) {
 
 function mediaLabel(item) {
   const ct = String(item.contentType || '').toLowerCase();
-  const url = String(item.url || '').toLowerCase();
-  if (item.kind === 'hls') return 'AKIŞ';
-  if (item.kind === 'dash') return 'DASH';
-  if (ct.startsWith('audio/') || /\.(mp3|m4a|aac|ogg|opus|wav|flac)(?:$|[?#])/.test(url)) return 'SES';
-  if (ct.startsWith('video/') || /\.(mp4|webm|mkv|mov|m4v|avi|flv|ogv)(?:$|[?#])/.test(url)) return 'GÖRÜNTÜ';
+  const url = String(item.url || '');
+  if (item.kind === 'hls' || item.kind === 'dash') {
+    const m = url.match(/(2160|1440|1080|720|480|360|240)/);
+    if (m) return 'AKIŞ ' + m[1] + 'p';
+    return item.kind === 'dash' ? 'DASH' : 'AKIŞ';
+  }
+  if (ct.startsWith('audio/') || /\.(mp3|m4a|aac|ogg|opus|wav|flac)(?:$|[?#])/.test(url.toLowerCase())) return 'SES';
+  if (ct.startsWith('video/') || /\.(mp4|webm|mkv|mov|m4v|avi|flv|ogv)(?:$|[?#])/.test(url.toLowerCase())) return 'GÖRÜNTÜ';
   return 'MEDYA';
 }
 
@@ -449,13 +452,22 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'get-media' && tabId >= 0) {
     (async () => {
       const record = await readTab(tabId);
+      let appLabels = {};
+      try {
+        const caps = await fetchJson(API_BASE + '/api/captures');
+        for (const c of (caps.captures || [])) {
+          if (c && c.url) appLabels[c.url] = c.media_label || c.kind_label || mediaLabel(c);
+        }
+      } catch {
+        // Uygulama kapalıysa yerel etiket kullan.
+      }
       const items = (record.items || []).map((item) => ({
         url: item.url,
         title: item.title || item.pageTitle || titleFromUrl(item.url),
         kind: item.kind || 'direct',
         contentType: item.contentType || '',
         size: Number(item.size) || 0,
-        label: mediaLabel(item),
+        label: appLabels[item.url] || mediaLabel(item),
       }));
       sendResponse({ ok: true, items });
     })().catch(() => sendResponse({ ok: false, items: [] }));
