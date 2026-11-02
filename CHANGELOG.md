@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.6 — 2026-11-02
+
+### Düzeltmeler
+
+- **Yakalama çalışmıyordu:** `handleDetection` içinde `pageUrl` değişkeni
+  tanımlanmadan önce kullanılıyordu (temporal dead zone) ve yakalama sessizce
+  başarısız oluyordu. Değişken kullanımı doğru sıraya alındı; Instagram ve
+  diğer sitelerde yakalama yeniden çalışıyor.
+
 ## 1.8.5 — 2026-11-02
 
 ### Düzeltmeler

@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.8.5"
+VERSION = "1.8.6"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)

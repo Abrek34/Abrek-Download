@@ -366,6 +366,10 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
     if (!isVideoContentType && size > 0 && size < MIN_DIRECT_SIZE) return;
   }
 
+  const info = await getTabInfo(tabId, initiator);
+  const pageUrl = info.pageUrl || initiator || '';
+  const pageTitle = info.pageTitle || '';
+
   // Instagram tek bir Reels sayfasında onlarca varyant/prefetch medya isteği
   // üretir. Aynı sayfa için daha önce yakalama varsa yenilerini ekleme; böylece
   // "Yakalananlar" listesi onlarca aynı sayfa girdisiyle dolmaz.
@@ -373,10 +377,6 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
   const isInstagramSingleMedia =
     /(^|\.)instagram\.com$/.test(new URL(pageUrl || 'http://x').hostname.replace(/^www\./, '')) &&
     (/\/reels?\//.test(pageUrlNorm) || /\/p\//.test(pageUrlNorm));
-
-  const info = await getTabInfo(tabId, initiator);
-  const pageUrl = info.pageUrl || initiator || '';
-  const pageTitle = info.pageTitle || '';
   const item = {
     url,
     kind,
