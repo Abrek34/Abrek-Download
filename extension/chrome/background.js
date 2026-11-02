@@ -360,12 +360,21 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
   const url = normalizeUrl(rawUrl);
   if (shouldIgnore(url)) return;
 
-  const kind = classify(contentType, url);
+  let kind = classify(contentType, url);
+  // Tarayıcının "media" olarak işaretlediği istekler video/medya kaynağıdır;
+  // uzantı veya content-type eksik olsa bile yakala (film siteleri vb.).
+  if (!kind && requestType === 'media') kind = 'direct';
+  // Film siteleri videoyu octet-stream veya uzantısız URL ile sunabilir.
+  if (!kind) {
+    const ct = String(contentType || '').toLowerCase();
+    if (ct.includes('octet-stream') || ct.includes('binary') || ct === '') {
+      if (/video|stream|play|master|playlist|media|cdn|m3u8|mpd/i.test(url)) kind = 'direct';
+    }
+  }
   if (!kind) return;
   if (kind === 'direct') {
-    if (!MEDIA_EXT.test(url) && requestType !== 'media' && requestType !== 'dom') return;
     const isVideoContentType = String(contentType || '').toLowerCase().startsWith('video/');
-    if (!isVideoContentType && size > 0 && size < MIN_DIRECT_SIZE) return;
+    if (!isVideoContentType && size > 0 && size < MIN_DIRECT_SIZE && !contentRange) return;
   }
 
   const info = await getTabInfo(tabId, initiator);
@@ -481,11 +490,20 @@ ext.webRequest.onHeadersReceived.addListener(
     const size = parseInt(headerValue(headers, 'content-length'), 10) || 0;
     const purpose = headerValue(headers, 'sec-purpose') || headerValue(headers, 'purpose') || headerValue(headers, 'x-purpose');
     if (/prefetch/i.test(purpose)) return;
-    // Aralık (range) istekleri de yakalanır; aynı URL için tekrar yakalama
-    // handleDetection içindeki tekilleştirme ile engellenir.
-    if (size > 0 && size < MIN_DIRECT_SIZE && !MANIFEST_EXT.test(details.url) && !contentRange) return;
-    if (!MANIFEST_EXT.test(details.url) && !contentType && !MEDIA_EXT.test(details.url)) return;
-    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) return;
+    const isManifestUrl = MANIFEST_EXT.test(details.url);
+    const isMediaUrl = MEDIA_EXT.test(details.url);
+    const looksLikeVideoPath = /video|stream|play|master|playlist|media|cdn|m3u8|mpd/i.test(details.url);
+    const ctLower = String(contentType || '').toLowerCase();
+    const isVideoCt = ctLower.startsWith('video/') || ctLower.startsWith('audio/') ||
+      ctLower.includes('mpegurl') || ctLower.includes('dash+xml') ||
+      ctLower.includes('octet-stream') || ctLower.includes('binary');
+    // HTML/JS/CSS/görsel yanıtlarını atla.
+    if (ctLower.includes('text/html') || ctLower.includes('application/xhtml') ||
+        ctLower.includes('javascript') || ctLower.includes('css') ||
+        ctLower.includes('image/')) return;
+    // Çok küçük ve video olmayan yanıtları atla.
+    if (size > 0 && size < MIN_DIRECT_SIZE && !isVideoCt && !isManifestUrl && !contentRange) return;
+    if (!isManifestUrl && !isMediaUrl && !isVideoCt && !looksLikeVideoPath) return;
     handleDetection(
       details.tabId,
       details.url,

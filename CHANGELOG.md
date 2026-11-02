@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.11 — 2026-11-02
+
+### Düzeltmeler
+
+- **Film sitelerinde indirme hatası:** yakalanan medya URL'si yt-dlp tarafından
+  desteklenmeyen bir sayfa bağlantısı olabiliyordu. Ağ yakalama daha esnek
+  hale getirildi (octet-stream, uzantısız media URL'leri de yakalanır); böylece
+  gerçek video bağlantısı (mp4/m3u8) yakalanıp doğrudan indirilebilir.
+
 ## 1.8.10 — 2026-11-02
 
 ### Düzeltmeler

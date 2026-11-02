@@ -167,10 +167,35 @@
           }];
         }
       }
+      // Henüz yakalama yoksa video kaynaklarını yeniden topla ve tekrar dene.
+      if (!items.length) {
+        const srcs = [];
+        const seenSrc = new Set();
+        for (const element of document.querySelectorAll('video, audio, source')) {
+          for (const value of [element.currentSrc, element.src, element.getAttribute('src')]) {
+            if (value && /^https?:/i.test(value) && !seenSrc.has(value)) {
+              seenSrc.add(value);
+              srcs.push(value);
+            }
+          }
+        }
+        if (srcs.length) {
+          const loading = document.createElement('div');
+          loading.className = 'va-empty';
+          loading.textContent = 'Yükleniyor…';
+          menu.appendChild(loading);
+          request({ type: 'dom-media', urls: srcs }).catch(() => {});
+          request({ type: 'page-info', pageUrl: location.href, pageTitle: document.title, hasVideo: true }).catch(() => {});
+          setTimeout(() => {
+            request({ type: 'get-media' }).then(render).catch(() => render(null));
+          }, 1500);
+          return;
+        }
+      }
       if (!items.length) {
         const empty = document.createElement('div');
         empty.className = 'va-empty';
-        empty.textContent = 'Yakalanan medya yok';
+        empty.textContent = 'Yakalanan medya yok — videoyu oynatıp tekrar deneyin';
         menu.appendChild(empty);
         return;
       }
