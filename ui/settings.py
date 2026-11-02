@@ -232,6 +232,14 @@ class SettingsPage(tk.Frame):
             style="TCheckbutton",
         ).pack(fill="x", pady=(0, 6))
 
+        self.capture_paused_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            body,
+            text=t("settings.capture_paused"),
+            variable=self.capture_paused_var,
+            style="TCheckbutton",
+        ).pack(fill="x", pady=(0, 6))
+
         self.clipboard_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             body,
@@ -377,6 +385,7 @@ class SettingsPage(tk.Frame):
         self.auto_resume_var.set(bool(config.get("auto_resume", True)))
         self.notify_var.set(bool(config.get("notify_captures", True)))
         self.notify_downloads_var.set(bool(config.get("notify_downloads", True)))
+        self.capture_paused_var.set(bool(config.get("capture_paused", False)))
         self.clipboard_var.set(bool(config.get("watch_clipboard", False)))
         self.subtitles_var.set(bool(config.get("download_subtitles", False)))
         finish_action = str(config.get("shutdown_on_finish", "none") or "none")
@@ -472,6 +481,7 @@ class SettingsPage(tk.Frame):
                 "auto_resume": bool(self.auto_resume_var.get()),
                 "notify_captures": bool(self.notify_var.get()),
                 "notify_downloads": bool(self.notify_downloads_var.get()),
+                "capture_paused": bool(self.capture_paused_var.get()),
                 "watch_clipboard": bool(self.clipboard_var.get()),
                 "download_subtitles": bool(self.subtitles_var.get()),
                 "shutdown_on_finish": finish_action,

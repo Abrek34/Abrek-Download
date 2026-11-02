@@ -23,6 +23,21 @@ const BLOCKED_HOSTS = /(^|\.)googlevideo\.com$/i;
 
 const tabInfoCache = new Map();
 const locks = new Map();
+let capturePausedCached = false;
+let lastCapturePausedCheck = 0;
+
+async function isCapturePaused() {
+  const now = Date.now();
+  if (now - lastCapturePausedCheck < 10000) return capturePausedCached;
+  lastCapturePausedCheck = now;
+  try {
+    const health = await fetchJson(API_BASE + '/api/health');
+    capturePausedCached = !!(health && health.capture_paused);
+  } catch {
+    // Uygulama kapalıysa yakalama devam etsin.
+  }
+  return capturePausedCached;
+}
 
 function call(fn, ...args) {
   if (isFirefox) {
@@ -144,6 +159,7 @@ function isVideoPageUrl(url) {
 }
 
 async function checkAndAddVideoPage(tabId, pageUrl, pageTitle) {
+  if (await isCapturePaused()) return;
   if (!isVideoPageUrl(pageUrl)) return;
   await withLock(`tab:${tabId}`, async () => {
     const record = await readTab(tabId);
@@ -338,6 +354,7 @@ async function retryPending() {
 
 async function handleDetection(tabId, rawUrl, contentType, size, source, initiator, requestType) {
   if (!Number.isInteger(tabId) || tabId < 0) return;
+  if (await isCapturePaused()) return;
   const url = normalizeUrl(rawUrl);
   if (shouldIgnore(url)) return;
 
@@ -345,7 +362,8 @@ async function handleDetection(tabId, rawUrl, contentType, size, source, initiat
   if (!kind) return;
   if (kind === 'direct') {
     if (!MEDIA_EXT.test(url) && requestType !== 'media' && requestType !== 'dom') return;
-    if (size > 0 && size < MIN_DIRECT_SIZE) return;
+    const isVideoContentType = String(contentType || '').toLowerCase().startsWith('video/');
+    if (!isVideoContentType && size > 0 && size < MIN_DIRECT_SIZE) return;
   }
 
   // Instagram tek bir Reels sayfasında onlarca varyant/prefetch medya isteği
@@ -458,10 +476,11 @@ ext.webRequest.onHeadersReceived.addListener(
     const contentType = headerValue(headers, 'content-type');
     const contentRange = headerValue(headers, 'content-range');
     const size = parseInt(headerValue(headers, 'content-length'), 10) || 0;
-    if (contentRange) return;
     const purpose = headerValue(headers, 'sec-purpose') || headerValue(headers, 'purpose') || headerValue(headers, 'x-purpose');
     if (/prefetch/i.test(purpose)) return;
-    if (size > 0 && size < MIN_DIRECT_SIZE && !MANIFEST_EXT.test(details.url)) return;
+    // Aralık (range) istekleri de yakalanır; aynı URL için tekrar yakalama
+    // handleDetection içindeki tekilleştirme ile engellenir.
+    if (size > 0 && size < MIN_DIRECT_SIZE && !MANIFEST_EXT.test(details.url) && !contentRange) return;
     if (!contentType && !MEDIA_EXT.test(details.url) && !MANIFEST_EXT.test(details.url)) return;
     if (contentType.includes('text/html') || contentType.includes('application/xhtml')) return;
     handleDetection(

@@ -1,5 +1,16 @@
 # Sürüm Notları
 
+## 1.8.5 — 2026-11-02
+
+### Düzeltmeler
+
+- **Instagram yakalama:** aralık (range) istekleri ve varyantlar artık
+  engellemiyor; Instagram Reels videoları yakalanabiliyor. Aynı video için
+  yinelenen yakalama engelleniyor.
+- **Yakalamayı duraklat:** Ayarlar sayfasına "Video yakalamayı duraklat"
+  seçeneği eklendi. Etkinken tarayıcı eklentisi yeni yakalama göndermez;
+  `/api/health` üzerinden durum yayınlanır ve eklenti bu duruma uyar.
+
 ## 1.8.4 — 2026-11-02
 
 ### Düzeltmeler

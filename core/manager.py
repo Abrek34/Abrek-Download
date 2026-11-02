@@ -252,6 +252,7 @@ class DownloadManager:
             "ytdlp": self.ytdlp_version(),
             "api": f"http://{API_HOST}:{API_PORT}",
             "download_dir": str(self.config.download_dir),
+            "capture_paused": bool(self.config.get("capture_paused", False)),
             **stats,
         }
 

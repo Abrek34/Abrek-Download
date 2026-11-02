@@ -126,6 +126,7 @@
   "settings.auto_resume": "Uygulama kapanırken yarım kalan indirmeleri sonraki açılışta sürdür",
   "settings.notify_captures": "Yeni video yakalandığında masaüstü bildirimi göster",
   "settings.notify_downloads": "İndirme tamamlandığında veya başarısız olduğunda masaüstü bildirimi göster",
+  "settings.capture_paused": "Video yakalamayı duraklat (tarayıcı eklentisi yeni yakalama göndermez)",
   "settings.cookies": "Çerez kaynağı",
   "settings.cookies_hint": "Giriş gerektiren siteler için tarayıcı çerezlerini kullanın. Tarayıcı kapalı olmalı.",
   "settings.cookies.none": "Kullanma",

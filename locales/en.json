@@ -126,6 +126,7 @@
   "settings.auto_resume": "Resume unfinished downloads on next launch",
   "settings.notify_captures": "Show desktop notification when a video is captured",
   "settings.notify_downloads": "Show desktop notification when a download completes or fails",
+  "settings.capture_paused": "Pause video capture (browser extension stops sending captures)",
   "settings.cookies": "Cookie source",
   "settings.cookies_hint": "Use browser cookies for sites requiring login. Browser must be closed.",
   "settings.cookies.none": "Do not use",

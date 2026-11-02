@@ -179,6 +179,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/captures":
+            if self.manager.config.get("capture_paused"):
+                self._send_json(200, {"ok": True, "paused": True, "duplicate": True})
+                return
             try:
                 capture, duplicate = self.manager.add_capture(payload)
             except ValueError as exc:
