@@ -238,7 +238,8 @@
         const qOptions = [
           { label: '⚡ En İyi', q: 'best' },
           { label: '720p', q: '720' },
-          { label: '🎵 MP3', q: 'audio' }
+          { label: '🎵 MP3', q: 'audio' },
+          { label: '🔀 Ses+Görüntü', q: 'merge' }
         ];
 
         for (const opt of qOptions) {
