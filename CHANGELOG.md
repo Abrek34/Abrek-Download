@@ -1,5 +1,13 @@
 # Sürüm Notları
 
+## 1.8.3 — 2026-11-02
+
+### Yeni özellikler
+
+- **GUI kurulum sihirbazı çalıştırılabilir hale getirildi:** `install-gui.sh`
+  betiği eklendi. Grafik oturum yoksa veya Tkinter eksikse terminal kurulumuna
+  (`install.sh`) düşer; `install_gui.py` çalıştırılabilir yapıldı.
+
 ## 1.8.2 — 2026-11-02
 
 ### Yeni özellikler

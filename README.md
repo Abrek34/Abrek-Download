@@ -4,7 +4,7 @@ Linux için, tarayıcı eklentisiyle çalışan bir video indirici. İnternette 
 oynatılan videoları otomatik yakalar; YouTube gibi sitelerde `yt-dlp`, doğrudan
 medya dosyalarında çok parçalı indirme motoru kullanır.
 
-Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.2**.
+Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.3**.
 
 ## Özellikler
 
@@ -68,8 +68,10 @@ kurulum için grafik arayüzü de vardır:
 
 ```bash
 cd ~/Desktop/Abrek-Download-main
-./kurulum.sh
+./install-gui.sh
 ```
+
+(`./kurulum.sh` de aynı arayüzü açar.)
 
 Kurulum arayüzü ortamı denetler (Python, Tkinter, ffmpeg, deno, yt-dlp),
 eksik bileşenleri listeler ve uygulama menüsü/masaüstü kısayollarını tek
@@ -282,6 +284,7 @@ Abrek-Download-main/
 ├── guncelle.sh            # Bağımlılıkları günceller
 ├── install.sh             # Uygulama menüsüne kurar
 ├── firefox-eklenti.sh     # Firefox XPI + kurulum yardımcısı
+├── install-gui.sh         # GUI kurulum sihirbazını başlatır (install_gui.py)
 ├── kurulum.sh             # Kurulum arayüzünü başlatır
 ├── install_gui.py         # Tkinter kurulum arayüzü
 ├── installer_strings.py   # Kurulum arayüzü metinleri
