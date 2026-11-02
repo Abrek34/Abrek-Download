@@ -223,6 +223,16 @@ class SettingsPage(tk.Frame):
             style="TCheckbutton",
         ).pack(fill="x", pady=(0, 12))
 
+        theme_row = self._row(body, "Tema", "Arayüz renk teması. Değişiklik yeniden başlatma gerektirir.")
+        self.theme_combo = ttk.Combobox(
+            theme_row,
+            state="readonly",
+            values=["Koyu", "Açık"],
+            width=12,
+            font=font(10),
+        )
+        self.theme_combo.pack(side="right")
+
         row = self._row(
             body,
             "Çerez kaynağı",
@@ -322,6 +332,7 @@ class SettingsPage(tk.Frame):
         self.auto_resume_var.set(bool(config.get("auto_resume", True)))
         self.notify_var.set(bool(config.get("notify_captures", True)))
         self.notify_downloads_var.set(bool(config.get("notify_downloads", True)))
+        self.theme_combo.set("Açık" if str(config.get("theme", "dark")) == "light" else "Koyu")
         cookies = str(config.get("cookies_browser", "none") or "none")
         self.cookies_combo.set(COOKIE_TO_LABEL.get(cookies, COOKIE_TO_LABEL["none"]))
         self.refresh_ytdlp_version()
@@ -388,6 +399,7 @@ class SettingsPage(tk.Frame):
                 "auto_resume": bool(self.auto_resume_var.get()),
                 "notify_captures": bool(self.notify_var.get()),
                 "notify_downloads": bool(self.notify_downloads_var.get()),
+                "theme": "light" if self.theme_combo.get() == "Açık" else "dark",
             }
         )
         self.save_status.configure(text="Ayarlar kaydedildi.", fg=GREEN)

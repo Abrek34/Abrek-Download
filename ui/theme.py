@@ -1,35 +1,87 @@
-"""Koyu tema renkleri, yazı tipleri ve ttk stilleri."""
+"""Tema renkleri, yazı tipleri ve ttk stilleri."""
 
 from __future__ import annotations
 
+import json
+import os
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
-# ------------------------------------------------------------------ palet
-BG = "#0d1017"
-BG_SOFT = "#11151e"
-SIDEBAR = "#0a0d13"
-CARD = "#151a24"
-CARD_ALT = "#1a2130"
-CARD_HOVER = "#1f2737"
-BORDER = "#242c3b"
-BORDER_LIGHT = "#323c50"
-TEXT = "#edf1f8"
-TEXT_DIM = "#a6afc1"
-MUTED = "#77829a"
-ACCENT = "#6d8dff"
-ACCENT_HOVER = "#8aa3ff"
-ACCENT_SOFT = "#1a2544"
-GREEN = "#4bd6a0"
-GREEN_SOFT = "#12352b"
-YELLOW = "#f5bd66"
-YELLOW_SOFT = "#392d1a"
-RED = "#ff7288"
-RED_SOFT = "#3a1a24"
-BLUE = "#62b6ff"
-BLUE_SOFT = "#152b40"
-PURPLE = "#b18cff"
-PURPLE_SOFT = "#291f42"
+# ------------------------------------------------------------------ paletler
+DARK = {
+    "BG": "#0d1017",
+    "BG_SOFT": "#11151e",
+    "SIDEBAR": "#0a0d13",
+    "CARD": "#151a24",
+    "CARD_ALT": "#1a2130",
+    "CARD_HOVER": "#1f2737",
+    "BORDER": "#242c3b",
+    "BORDER_LIGHT": "#323c50",
+    "TEXT": "#edf1f8",
+    "TEXT_DIM": "#a6afc1",
+    "MUTED": "#77829a",
+    "ACCENT": "#6d8dff",
+    "ACCENT_HOVER": "#8aa3ff",
+    "ACCENT_SOFT": "#1a2544",
+    "GREEN": "#4bd6a0",
+    "GREEN_SOFT": "#12352b",
+    "YELLOW": "#f5bd66",
+    "YELLOW_SOFT": "#392d1a",
+    "RED": "#ff7288",
+    "RED_SOFT": "#3a1a24",
+    "BLUE": "#62b6ff",
+    "BLUE_SOFT": "#152b40",
+    "PURPLE": "#b18cff",
+    "PURPLE_SOFT": "#291f42",
+}
+
+LIGHT = {
+    "BG": "#f5f7fb",
+    "BG_SOFT": "#eef2f8",
+    "SIDEBAR": "#ffffff",
+    "CARD": "#ffffff",
+    "CARD_ALT": "#f0f3f9",
+    "CARD_HOVER": "#e6ecf5",
+    "BORDER": "#d8dfe8",
+    "BORDER_LIGHT": "#c3ccd8",
+    "TEXT": "#1b2230",
+    "TEXT_DIM": "#4b5565",
+    "MUTED": "#7b8798",
+    "ACCENT": "#4f6cff",
+    "ACCENT_HOVER": "#6a84ff",
+    "ACCENT_SOFT": "#e0e7ff",
+    "GREEN": "#1fa971",
+    "GREEN_SOFT": "#d9f2e6",
+    "YELLOW": "#c98a1b",
+    "YELLOW_SOFT": "#f7ecd2",
+    "RED": "#d6455d",
+    "RED_SOFT": "#f8d7dc",
+    "BLUE": "#2b8fd6",
+    "BLUE_SOFT": "#d8ecfa",
+    "PURPLE": "#8a5cf6",
+    "PURPLE_SOFT": "#e9e0fb",
+}
+
+# ------------------------------------------------------------------ tema seçimi
+def _selected_theme() -> str:
+    name = os.environ.get("ABREK_THEME", "").strip().lower()
+    if name in {"dark", "light"}:
+        return name
+    try:
+        config_path = Path.home() / ".config" / "videoavci" / "config.json"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            value = str(data.get("theme", "") or "").strip().lower()
+            if value in {"dark", "light"}:
+                return value
+    except Exception:
+        pass
+    return "dark"
+
+
+_palette = LIGHT if _selected_theme() == "light" else DARK
+globals().update(_palette)
 
 FONT = "Fira Sans"
 MONO = "DejaVu Sans Mono"
@@ -206,7 +258,7 @@ def draw_progress(canvas: tk.Canvas, percent: float, color: str) -> None:
     width = max(1, canvas.winfo_width())
     height = max(1, canvas.winfo_height())
     radius = min(4, height / 2)
-    rounded_rect(canvas, 0, 0, width, height, radius, fill="#222a3a", outline="")
+    rounded_rect(canvas, 0, 0, width, height, radius, fill=CARD_ALT, outline="")
     percent = max(0.0, min(100.0, float(percent or 0)))
     if percent <= 0:
         return

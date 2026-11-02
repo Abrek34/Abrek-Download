@@ -38,6 +38,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notify_captures": True,
     "notify_downloads": True,
     "window_geometry": "",
+    "theme": "dark",
 }
 
 

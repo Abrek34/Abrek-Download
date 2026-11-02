@@ -638,9 +638,9 @@ class DownloadManager:
             return "direct"
         if is_manifest_url(task.url):
             return "ytdlp"
-        if is_media_url(task.url):
-            return "direct"
-        return "ytdlp"
+        # Bilinmeyen uzantılar için önce doğrudan indirmeyi dene; HTML dönerse
+        # _run_task içinde yt-dlp'ye otomatik geçilir.
+        return "direct"
 
     def _progress_callback(self, task_id: str):
         def callback(downloaded: int, total: int, percent: float, speed: float, eta: int) -> None:
