@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from core.i18n import t
 from core.models import QUALITY_LABELS
 
 from . import theme
@@ -27,11 +28,11 @@ QUALITY_ORDER = ["best", "2160", "1440", "1080", "720", "480", "audio"]
 QUALITY_TO_LABEL = {code: QUALITY_LABELS[code] for code in QUALITY_ORDER}
 LABEL_TO_QUALITY = {label: code for code, label in QUALITY_TO_LABEL.items()}
 
-FILTERS = [
-    ("all", "Tümü"),
-    ("active", "Aktif"),
-    ("completed", "Tamamlanan"),
-    ("error", "Hata"),
+FILTER_KEYS = [
+    ("all", "downloads.filter.all"),
+    ("active", "downloads.filter.active"),
+    ("completed", "downloads.filter.completed"),
+    ("error", "downloads.filter.error"),
 ]
 
 STATUS_PRIORITY = {
@@ -71,10 +72,9 @@ class DownloadsPage(tk.Frame):
         self.empty = EmptyState(
             self.scroll.inner,
             "↓",
-            "Henüz indirme yok",
-            "Bir video bağlantısı yapıştırın ya da tarayıcı eklentisiyle "
-            "yakaladığınız bir videoyu indirin.",
-            "Yakalananlara bak",
+            t("downloads.empty_title"),
+            t("downloads.empty_message"),
+            t("downloads.empty_action_captures"),
             lambda: self.app.show_page("captures"),
         )
         self.empty.pack(fill="x")
@@ -88,16 +88,16 @@ class DownloadsPage(tk.Frame):
 
         head = tk.Frame(inner, bg=CARD)
         head.pack(fill="x", pady=(0, 10))
-        tk.Label(head, text="Yeni indirme", bg=CARD, fg=TEXT, font=font(12, "bold")).pack(side="left")
+        tk.Label(head, text=t("downloads.new_download"), bg=CARD, fg=TEXT, font=font(12, "bold")).pack(side="left")
         tk.Label(
             head,
-            text="Video sayfası, HLS/DASH yayını veya doğrudan medya bağlantısı",
+            text=t("downloads.new_download_subtitle"),
             bg=CARD,
             fg=MUTED,
             font=font(9),
         ).pack(side="left", padx=(10, 0), pady=(3, 0))
 
-        paste = make_button(head, "Yapıştır", self.paste_from_clipboard, kind="link", size=9, bg=CARD, pady=2)
+        paste = make_button(head, t("downloads.paste"), self.paste_from_clipboard, kind="link", size=9, bg=CARD, pady=2)
         paste.pack(side="right")
 
         row = tk.Frame(inner, bg=CARD)
@@ -105,7 +105,7 @@ class DownloadsPage(tk.Frame):
 
         self.url_entry = PlaceholderEntry(
             row,
-            placeholder="https://…  video bağlantısını buraya yapıştırın",
+            placeholder=t("downloads.url_placeholder"),
             bg=theme.CARD_ALT,
             font=font(11),
         )
@@ -125,7 +125,7 @@ class DownloadsPage(tk.Frame):
 
         self.add_button = make_button(
             row,
-            "İndir",
+            t("downloads.download"),
             self.add_download,
             kind="primary",
             size=10,
@@ -140,10 +140,10 @@ class DownloadsPage(tk.Frame):
 
         chips = tk.Frame(bar, bg=BG)
         chips.pack(side="left")
-        for key, label in FILTERS:
+        for key, text_key in FILTER_KEYS:
             button = tk.Button(
                 chips,
-                text=label,
+                text=t(text_key),
                 command=lambda k=key: self.set_filter(k),
                 bg=BG,
                 fg=TEXT_DIM,
@@ -164,9 +164,9 @@ class DownloadsPage(tk.Frame):
 
         actions = tk.Frame(bar, bg=BG)
         actions.pack(side="right")
-        make_button(actions, "Tümünü duraklat", self.pause_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
-        make_button(actions, "Tümünü sürdür", self.resume_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
-        make_button(actions, "Bitmişleri temizle", self.clear_finished, kind="ghost", size=8, bg=BG).pack(side="left")
+        make_button(actions, t("downloads.pause_all"), self.pause_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
+        make_button(actions, t("downloads.resume_all"), self.resume_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
+        make_button(actions, t("downloads.clear_finished"), self.clear_finished, kind="ghost", size=8, bg=BG).pack(side="left")
 
         self._paint_filters()
 
@@ -174,7 +174,7 @@ class DownloadsPage(tk.Frame):
     def add_download(self) -> None:
         url = self.url_entry.value()
         if not url:
-            self.app.toast("Önce bir video bağlantısı yapıştırın.", "warning")
+            self.app.toast(t("downloads.toast.no_url"), "warning")
             self.url_entry.focus_set()
             return
         label = self.quality_combo.get()
@@ -185,12 +185,12 @@ class DownloadsPage(tk.Frame):
             self.app.toast(str(exc), "error")
             return
         except Exception as exc:
-            self.app.toast(f"İndirme eklenemedi: {exc}", "error")
+            self.app.toast(t("downloads.toast.add_failed", error=exc), "error")
             return
         if duplicate:
-            self.app.toast("Bu bağlantı zaten kuyrukta.", "warning")
+            self.app.toast(t("downloads.toast.already_queued"), "warning")
         else:
-            self.app.toast(f"Kuyruğa eklendi: {task.display_title()}", "success")
+            self.app.toast(t("downloads.toast.queued", title=task.display_title()), "success")
             self.url_entry.clear()
         self.app.refresh_now()
 
@@ -198,11 +198,11 @@ class DownloadsPage(tk.Frame):
         try:
             text = self.clipboard_get()
         except tk.TclError:
-            self.app.toast("Panoda metin bulunamadı.", "warning")
+            self.app.toast(t("downloads.toast.no_clipboard"), "warning")
             return
         text = (text or "").strip()
         if not text:
-            self.app.toast("Panoda metin bulunamadı.", "warning")
+            self.app.toast(t("downloads.toast.no_clipboard"), "warning")
             return
         self.url_entry.set_value(text)
         self.url_entry.icursor("end")
@@ -225,19 +225,18 @@ class DownloadsPage(tk.Frame):
 
     def pause_all(self) -> None:
         self.app.manager.pause_all()
-        self.app.toast("Tüm indirmeler duraklatıldı.", "info")
+        self.app.toast(t("downloads.toast.all_paused"), "info")
         self.app.refresh_now()
 
     def resume_all(self) -> None:
         self.app.manager.resume_all()
-        self.app.toast("Bekleyen indirmeler sürdürülüyor.", "success")
+        self.app.toast(t("downloads.toast.all_resumed"), "success")
         self.app.refresh_now()
 
     def clear_finished(self) -> None:
         if not messagebox.askyesno(
-            "Bitmişleri temizle",
-            "Tamamlanan, iptal edilen ve hatalı görevler listeden kaldırılsın mı?\n"
-            "İndirilen dosyalar silinmez.",
+            t("downloads.confirm_clear_title"),
+            t("downloads.confirm_clear_message"),
             parent=self,
         ):
             return
@@ -256,29 +255,29 @@ class DownloadsPage(tk.Frame):
     def update_tasks(self, tasks: list[dict]) -> None:
         counts = {
             "all": len(tasks),
-            "active": sum(1 for t in tasks if t.get("status") not in {"completed", "error", "canceled"}),
-            "completed": sum(1 for t in tasks if t.get("status") == "completed"),
-            "error": sum(1 for t in tasks if t.get("status") == "error"),
+            "active": sum(1 for t_item in tasks if t_item.get("status") not in {"completed", "error", "canceled"}),
+            "completed": sum(1 for t_item in tasks if t_item.get("status") == "completed"),
+            "error": sum(1 for t_item in tasks if t_item.get("status") == "error"),
         }
-        for key, label in FILTERS:
-            self._filter_buttons[key].configure(text=f"{label}  {counts[key]}")
+        for key, text_key in FILTER_KEYS:
+            self._filter_buttons[key].configure(text=f"{t(text_key)}  {counts[key]}")
 
         filtered = tasks
         if self._filter == "active":
-            filtered = [t for t in tasks if t.get("status") not in {"completed", "error", "canceled"}]
+            filtered = [t_item for t_item in tasks if t_item.get("status") not in {"completed", "error", "canceled"}]
         elif self._filter == "completed":
-            filtered = [t for t in tasks if t.get("status") == "completed"]
+            filtered = [t_item for t_item in tasks if t_item.get("status") == "completed"]
         elif self._filter == "error":
-            filtered = [t for t in tasks if t.get("status") == "error"]
+            filtered = [t_item for t_item in tasks if t_item.get("status") == "error"]
 
         filtered = sorted(
             filtered,
-            key=lambda t: (
-                STATUS_PRIORITY.get(str(t.get("status")), 9),
-                -float(t.get("created_at") or 0),
+            key=lambda t_item: (
+                STATUS_PRIORITY.get(str(t_item.get("status")), 9),
+                -float(t_item.get("created_at") or 0),
             ),
         )
-        desired = tuple(str(t.get("id")) for t in filtered)
+        desired = tuple(str(t_item.get("id")) for t_item in filtered)
 
         for task_id in list(self.cards):
             if task_id not in desired:
@@ -304,14 +303,13 @@ class DownloadsPage(tk.Frame):
             self.empty.pack_forget()
         else:
             if tasks:
-                self.empty.title_label.configure(text="Bu filtrede görev yok")
+                self.empty.title_label.configure(text=t("downloads.empty_filtered_title"))
                 self.empty.message_label.configure(
-                    text="Başka bir filtre seçin veya yeni bir indirme başlatın."
+                    text=t("downloads.empty_filtered_message")
                 )
             else:
-                self.empty.title_label.configure(text="Henüz indirme yok")
+                self.empty.title_label.configure(text=t("downloads.empty_title"))
                 self.empty.message_label.configure(
-                    text="Bir video bağlantısı yapıştırın ya da tarayıcı eklentisiyle "
-                    "yakaladığınız bir videoyu indirin."
+                    text=t("downloads.empty_message")
                 )
             self.empty.pack(fill="x")

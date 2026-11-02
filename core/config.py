@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.0.0"
+VERSION = "1.4.0"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -43,6 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notify_downloads": True,
     "window_geometry": "",
     "theme": "dark",
+    "language": "tr",
 }
 
 
@@ -82,6 +83,8 @@ class Config:
         self.data["default_quality"] = quality
         if self.data.get("cookies_browser") not in {"none", "brave", "firefox", "chrome", "chromium"}:
             self.data["cookies_browser"] = "none"
+        if self.data.get("language") not in {"tr", "en"}:
+            self.data["language"] = "tr"
         directory = str(self.data.get("download_dir") or DEFAULT_DOWNLOAD_DIR)
         self.data["download_dir"] = os.path.expanduser(directory)
 

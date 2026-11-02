@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .theme import BG, BORDER, CARD, MUTED, TEXT, font, make_button
+from core.i18n import t
 from .widgets import CaptureCard, EmptyState, ScrollFrame
 
 
@@ -25,7 +26,7 @@ class CapturesPage(tk.Frame):
         left.pack(side="left")
         self.count_label = tk.Label(
             left,
-            text="0 yakalanan video",
+            text=t("captures.none"),
             bg=BG,
             fg=TEXT,
             font=font(11, "bold"),
@@ -33,7 +34,7 @@ class CapturesPage(tk.Frame):
         self.count_label.pack(side="left")
         tk.Label(
             left,
-            text="Tarayıcıda oynatılan videolar burada birikir.",
+            text=t("captures.subtitle"),
             bg=BG,
             fg=MUTED,
             font=font(9),
@@ -41,7 +42,7 @@ class CapturesPage(tk.Frame):
 
         self.clear_button = make_button(
             bar,
-            "Tümünü temizle",
+            t("captures.clear_all"),
             self.clear_all,
             kind="ghost",
             size=8,
@@ -55,10 +56,9 @@ class CapturesPage(tk.Frame):
         self.empty = EmptyState(
             self.scroll.inner,
             "◎",
-            "Henüz video yakalanmadı",
-            "Tarayıcı eklentisini kurun, internette bir video oynatın; "
-            "Abrek Download videoyu otomatik olarak burada yakalar.",
-            "Eklenti kurulumunu aç",
+            t("captures.empty_title"),
+            t("captures.empty_message"),
+            t("captures.empty_action"),
             lambda: self.app.show_page("extension"),
         )
         self.empty.pack(fill="x")
@@ -71,13 +71,13 @@ class CapturesPage(tk.Frame):
         if not self._captures:
             return
         if not messagebox.askyesno(
-            "Yakalananları temizle",
-            "Yakalanan tüm videolar listeden kaldırılsın mı?\nİndirilen dosyalar etkilenmez.",
+            t("captures.clear_all"),
+            t("captures.clear_confirm"),
             parent=self,
         ):
             return
         self.app.manager.clear_captures()
-        self.app.toast("Yakalanan videolar temizlendi.", "info")
+        self.app.toast(t("captures.cleared"), "info")
         self.app.refresh_now()
 
     # ------------------------------------------------------------------ güncelle
@@ -85,7 +85,7 @@ class CapturesPage(tk.Frame):
         captures = list(snapshot.get("captures") or [])
         self._captures = captures
         self.count_label.configure(
-            text=f"{len(captures)} yakalanan video" if captures else "Henüz yakalanan video yok"
+            text=t("captures.count", count=len(captures)) if captures else t("captures.none")
         )
         self.clear_button.configure(state="normal" if captures else "disabled")
         if not captures:

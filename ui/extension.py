@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 
 from core.config import PROJECT_DIR
+from core.i18n import t
 from core.utils import open_path
 
 from .theme import (
@@ -56,34 +57,32 @@ class ExtensionPage(tk.Frame):
         self._build_hero(content)
         self._build_browser_card(
             content,
-            "Brave & Chrome",
-            "BRAVE / CHROME",
+            t("extension.brave_title"),
+            t("extension.brave_badge"),
             ACCENT,
             ACCENT_SOFT,
             CHROME_DIR,
             [
-                "Brave'de adres çubuğuna brave://extensions yazın. Chrome kullanıyorsanız chrome://extensions.",
-                "Sağ üstteki Geliştirici modu anahtarını açın.",
-                "Paketlenmemiş öğe yükle düğmesine tıklayın.",
-                "Aşağıdaki eklenti klasörünü seçin. Eklenti hemen yüklenir.",
+                t("extension.brave_step1"),
+                t("extension.brave_step2"),
+                t("extension.brave_step3"),
+                t("extension.brave_step4"),
             ],
-            "İpucu: Eklenti simgesini araç çubuğuna sabitleyin. Popup üzerinden yakalanan "
-            "videoları görebilir ve tek tıkla indirebilirsiniz.",
+            t("extension.brave_tip"),
         )
         self._build_browser_card(
             content,
-            "Mozilla Firefox",
-            "FIREFOX",
+            t("extension.firefox_title"),
+            t("extension.firefox_badge"),
             PURPLE,
             PURPLE_SOFT,
             FIREFOX_DIR,
             [
-                "Adres çubuğuna about:debugging#/runtime/this-firefox yazın.",
-                "Geçici Eklenti Yükle düğmesine tıklayın.",
-                "Aşağıdaki klasördeki manifest.json dosyasını seçin.",
+                t("extension.firefox_step1"),
+                t("extension.firefox_step2"),
+                t("extension.firefox_step3"),
             ],
-            "Firefox geçici eklentileri yeniden başlatınca kaldırır. Her oturumda yeniden "
-            "yüklemeniz gerekir; kalıcı kurulum için eklentinin imzalanması gerekir.",
+            t("extension.firefox_note"),
         )
         self._build_test_card(content)
         self._build_note(content)
@@ -98,7 +97,7 @@ class ExtensionPage(tk.Frame):
         left.pack(side="left", fill="x", expand=True)
         tk.Label(
             left,
-            text="Tarayıcınıza bağlanın",
+            text=t("extension.hero_title"),
             bg=CARD,
             fg=TEXT,
             font=font(15, "bold"),
@@ -106,8 +105,7 @@ class ExtensionPage(tk.Frame):
         ).pack(fill="x")
         tk.Label(
             left,
-            text="Eklenti, gördüğünüz videoları yerel köprü üzerinden Abrek Download'ya gönderir. "
-            "Uygulama açıkken yakalananlar anında listelenir.",
+            text=t("extension.hero_desc"),
             bg=CARD,
             fg=MUTED,
             font=font(9),
@@ -118,7 +116,7 @@ class ExtensionPage(tk.Frame):
 
         self.status_chip = tk.Label(
             inner,
-            text="● Köprü çalışıyor",
+            text=t("extension.bridge_working"),
             bg=GREEN_SOFT,
             fg=GREEN,
             font=font(9, "bold"),
@@ -175,7 +173,7 @@ class ExtensionPage(tk.Frame):
 
         make_button(
             path_row,
-            "Kopyala",
+            t("extension.copy"),
             lambda p=str(path): self.copy_path(p),
             kind="ghost",
             size=8,
@@ -183,7 +181,7 @@ class ExtensionPage(tk.Frame):
         ).pack(side="left", padx=(8, 0))
         make_button(
             path_row,
-            "Klasörü aç",
+            t("extension.open_folder"),
             lambda p=str(path): self.open_folder(p),
             kind="subtle",
             size=8,
@@ -232,10 +230,10 @@ class ExtensionPage(tk.Frame):
         inner = tk.Frame(card, bg=CARD)
         inner.pack(fill="x", padx=18, pady=16)
 
-        tk.Label(inner, text="Bağlantı testi", bg=CARD, fg=TEXT, font=font(12, "bold"), anchor="w").pack(fill="x")
+        tk.Label(inner, text=t("extension.test_title"), bg=CARD, fg=TEXT, font=font(12, "bold"), anchor="w").pack(fill="x")
         tk.Label(
             inner,
-            text="Eklentinin kullandığı yerel köprüye erişip erişemediğinizi kontrol edin.",
+            text=t("extension.test_desc"),
             bg=CARD,
             fg=MUTED,
             font=font(9),
@@ -244,11 +242,11 @@ class ExtensionPage(tk.Frame):
 
         row = tk.Frame(inner, bg=CARD)
         row.pack(fill="x", pady=(12, 0))
-        self.test_button = make_button(row, "Bağlantıyı test et", self.test_connection, kind="primary", size=9, padx=16)
+        self.test_button = make_button(row, t("extension.test_button"), self.test_connection, kind="primary", size=9, padx=16)
         self.test_button.pack(side="left")
         self.test_result = tk.Label(
             row,
-            text="Henüz test edilmedi.",
+            text=t("extension.test_not_tested"),
             bg=CARD,
             fg=MUTED,
             font=font(9),
@@ -270,8 +268,7 @@ class ExtensionPage(tk.Frame):
     def _build_note(self, parent: tk.Misc) -> None:
         tk.Label(
             parent,
-            text="Abrek Download yalnızca indirme hakkınız olan içerikler için kullanılmalıdır. "
-            "DRM korumalı yayınlar indirilemez.",
+            text=t("extension.disclaimer"),
             bg=BG,
             fg=MUTED,
             font=font(8),
@@ -285,22 +282,22 @@ class ExtensionPage(tk.Frame):
         try:
             self.clipboard_clear()
             self.clipboard_append(path)
-            self.app.toast("Eklenti yolu kopyalandı.", "success")
+            self.app.toast(t("extension.path_copied"), "success")
         except tk.TclError:
-            self.app.toast("Yol kopyalanamadı.", "error")
+            self.app.toast(t("extension.path_copy_failed"), "error")
 
     def open_folder(self, path: str) -> None:
         try:
             open_path(path)
         except Exception as exc:
-            self.app.toast(f"Klasör açılamadı: {exc}", "error")
+            self.app.toast(t("extension.folder_open_failed", error=exc), "error")
 
     def test_connection(self) -> None:
         if self._testing:
             return
         self._testing = True
-        self.test_button.configure(state="disabled", text="Test ediliyor…")
-        self.test_result.configure(text="Yerel köprüye bağlanılıyor…", fg=YELLOW)
+        self.test_button.configure(state="disabled", text=t("extension.test_testing"))
+        self.test_result.configure(text=t("extension.test_connecting"), fg=YELLOW)
 
         def worker() -> None:
             result: tuple[bool, str]
@@ -312,11 +309,11 @@ class ExtensionPage(tk.Frame):
                 with urllib.request.urlopen(request, timeout=3) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 if payload.get("ok"):
-                    result = (True, f"Bağlı · yt-dlp {payload.get('ytdlp') or '—'} · API çalışıyor")
+                    result = (True, t("extension.test_connected", version=payload.get("ytdlp") or "—"))
                 else:
-                    result = (False, "Köprü yanıt verdi ama sağlık bilgisi geçersiz.")
+                    result = (False, t("extension.test_invalid_resp"))
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-                result = (False, f"Bağlantı kurulamadı: {exc}")
+                result = (False, t("extension.test_failed", error=exc))
             self.app.post(lambda: self._finish_test(result))
 
         threading.Thread(target=worker, name="videoavci-test", daemon=True).start()
@@ -324,13 +321,13 @@ class ExtensionPage(tk.Frame):
     def _finish_test(self, result: tuple[bool, str]) -> None:
         self._testing = False
         ok, message = result
-        self.test_button.configure(state="normal", text="Bağlantıyı test et")
+        self.test_button.configure(state="normal", text=t("extension.test_button"))
         self.test_result.configure(text=message, fg=GREEN if ok else RED)
 
     def refresh_status(self, server_ok: bool, error: str = "") -> None:
         if server_ok:
-            self.status_chip.configure(text="● Köprü çalışıyor", bg=GREEN_SOFT, fg=GREEN)
+            self.status_chip.configure(text=t("extension.bridge_working"), bg=GREEN_SOFT, fg=GREEN)
         else:
-            self.status_chip.configure(text="● Köprü kapalı", bg=RED_SOFT, fg=RED)
+            self.status_chip.configure(text=t("extension.bridge_offline"), bg=RED_SOFT, fg=RED)
             if error:
-                self.test_result.configure(text=f"Köprü başlatılamadı: {error}", fg=RED)
+                self.test_result.configure(text=t("extension.bridge_failed", error=error), fg=RED)

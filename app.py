@@ -39,6 +39,7 @@ from core.config import (
 )
 from core.manager import DownloadManager
 from core.server import ApiServer
+from core.i18n import t
 from core.utils import human_speed, open_in_file_manager, open_path
 from ui import theme
 from ui.captures import CapturesPage
@@ -73,17 +74,17 @@ from ui.widgets import ScrollFrame, show_details_dialog
 log = logging.getLogger("videoavci.app")
 
 PAGE_META = {
-    "downloads": ("İndirilenler", "İndirme kuyruğu ve tamamlanan dosyalar"),
-    "captures": ("Yakalananlar", "Tarayıcı eklentisinin bulduğu videolar"),
-    "extension": ("Eklenti", "Brave, Chrome ve Firefox kurulumu"),
-    "settings": ("Ayarlar", "İndirme tercihleri ve bakım"),
+    "downloads": (t("nav.downloads"), t("page.downloads.subtitle")),
+    "captures": (t("nav.captures"), t("page.captures.subtitle")),
+    "extension": (t("nav.extension"), t("page.extension.subtitle")),
+    "settings": (t("nav.settings"), t("page.settings.subtitle")),
 }
 
 NAV_ITEMS = [
-    ("downloads", "İndirilenler", "↓"),
-    ("captures", "Yakalananlar", "◎"),
-    ("extension", "Eklenti", "◈"),
-    ("settings", "Ayarlar", "⚙"),
+    ("downloads", t("nav.downloads"), "↓"),
+    ("captures", t("nav.captures"), "◎"),
+    ("extension", t("nav.extension"), "◈"),
+    ("settings", t("nav.settings"), "⚙"),
 ]
 
 
@@ -132,7 +133,7 @@ class VideoAvciApp(tk.Tk):
         self._notified_completed: set[str] = set()
         self._tray_icon = None
 
-        self.title("Abrek Download — Video İndirici")
+        self.title(t("app.title"))
         self.configure(bg=BG)
         self.minsize(1020, 660)
         self._set_initial_geometry()
@@ -185,14 +186,14 @@ class VideoAvciApp(tk.Tk):
 
         left = tk.Frame(self.header, bg=BG)
         left.pack(side="left", fill="x", expand=True)
-        self.page_title = tk.Label(left, text="İndirilenler", bg=BG, fg=TEXT, font=font(20, "bold"), anchor="w")
+        self.page_title = tk.Label(left, text=t("nav.downloads"), bg=BG, fg=TEXT, font=font(20, "bold"), anchor="w")
         self.page_title.pack(fill="x")
         self.page_subtitle = tk.Label(left, text="", bg=BG, fg=MUTED, font=font(9), anchor="w")
         self.page_subtitle.pack(fill="x", pady=(3, 0))
 
         self.stats_label = tk.Label(
             self.header,
-            text="● 0 aktif",
+            text=f"● {t('stats.active', count=0)}",
             bg=CARD,
             fg=TEXT_DIM,
             font=font(9),
@@ -227,7 +228,7 @@ class VideoAvciApp(tk.Tk):
         self.banner_label.pack(side="left", fill="x", expand=True)
         make_button(
             banner_inner,
-            "Yeniden dene",
+            t("banner.retry"),
             self.retry_server,
             kind="ghost",
             size=8,
@@ -282,12 +283,12 @@ class VideoAvciApp(tk.Tk):
         brand_text = tk.Frame(brand, bg=SIDEBAR)
         brand_text.pack(side="left", padx=(11, 0))
         tk.Label(brand_text, text=APP_NAME, bg=SIDEBAR, fg=TEXT, font=font(16, "bold"), anchor="w").pack(fill="x")
-        tk.Label(brand_text, text="video indirici", bg=SIDEBAR, fg=MUTED, font=font(8), anchor="w").pack(fill="x")
+        tk.Label(brand_text, text=t("app.subtitle"), bg=SIDEBAR, fg=MUTED, font=font(8), anchor="w").pack(fill="x")
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=(20, 16), padx=4)
         tk.Label(
             inner,
-            text="MENÜ",
+            text=t("sidebar.menu"),
             bg=SIDEBAR,
             fg="#59647a",
             font=font(7, "bold"),
@@ -345,7 +346,7 @@ class VideoAvciApp(tk.Tk):
         self.api_dot.create_oval(0, 0, 8, 8, fill=GREEN, outline="")
         self.api_label = tk.Label(
             dot_row,
-            text="Yerel köprü",
+            text=t("bridge.title"),
             bg=BG_SOFT,
             fg=TEXT_DIM,
             font=font(9, "bold"),
@@ -404,7 +405,7 @@ class VideoAvciApp(tk.Tk):
         try:
             open_in_file_manager(self.cfg.download_dir)
         except Exception as exc:
-            self.toast(f"Klasör açılamadı: {exc}", "error")
+            self.toast(t("toast.folder_open_failed", error=exc), "error")
 
     def _start_tray(self) -> None:
         if not TRAY_AVAILABLE:
@@ -421,12 +422,12 @@ class VideoAvciApp(tk.Tk):
                 self.after(0, self.on_close)
 
             menu = pystray.Menu(
-                pystray.MenuItem("Göster", on_show, default=True),
-                pystray.MenuItem("Klasörü aç", lambda icon, item: self.after(0, lambda: open_in_file_manager(self.cfg.download_dir))),
+                pystray.MenuItem(t("tray.show"), on_show, default=True),
+                pystray.MenuItem(t("tray.open_folder"), lambda icon, item: self.after(0, lambda: open_in_file_manager(self.cfg.download_dir))),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Çıkış", on_quit),
+                pystray.MenuItem(t("tray.quit"), on_quit),
             )
-            self._tray_icon = pystray.Icon("AbrekDownload", image, "Abrek Download", menu)
+            self._tray_icon = pystray.Icon("AbrekDownload", image, APP_NAME, menu)
             threading.Thread(target=self._tray_icon.run, daemon=True).start()
         except Exception:
             log.exception("Sistem tepsisi başlatılamadı")
@@ -540,13 +541,13 @@ class VideoAvciApp(tk.Tk):
         queued = int(snapshot.get("queued") or 0)
         speed = float(snapshot.get("speed") or 0.0)
         errors = int(snapshot.get("errors") or 0)
-        parts = [f"{active} aktif"]
+        parts = [t("stats.active", count=active)]
         if queued:
-            parts.append(f"{queued} sırada")
+            parts.append(t("stats.queued", count=queued))
         if speed:
             parts.append(human_speed(speed))
         if errors:
-            parts.append(f"{errors} hata")
+            parts.append(t("stats.errors", count=errors))
         self.stats_label.configure(text="●  " + "   ·   ".join(parts))
 
         active_tasks = sum(1 for task in tasks if task.get("status") not in {"completed", "canceled", "error"})
@@ -567,12 +568,12 @@ class VideoAvciApp(tk.Tk):
         if not shutil.which("notify-send"):
             return
         captures = snapshot.get("captures") or []
-        title = "Yeni video yakalandı"
+        title = t("notify.new_capture")
         if captures:
             title = str(captures[0].get("display_title") or title)[:140]
         try:
             subprocess.Popen(
-                ["notify-send", "-a", APP_NAME, "Yeni video yakalandı", title],
+                ["notify-send", "-a", APP_NAME, t("notify.new_capture"), title],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -591,12 +592,12 @@ class VideoAvciApp(tk.Tk):
             if task_id in self._notified_completed:
                 continue
             self._notified_completed.add(task_id)
-            title = str(task.get("display_title") or task.get("title") or "İndirme")[:140]
+            title = str(task.get("display_title") or task.get("title") or t("details.default_title"))[:140]
             filepath = str(task.get("filepath") or "")
-            body = filepath or "İndirme tamamlandı."
+            body = filepath or t("notify.download_complete")
             try:
                 subprocess.Popen(
-                    ["notify-send", "-a", APP_NAME, "İndirme tamamlandı", f"{title}\n{body}"],
+                    ["notify-send", "-a", APP_NAME, t("notify.download_complete"), f"{title}\n{body}"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -607,17 +608,13 @@ class VideoAvciApp(tk.Tk):
     def _paint_api_status(self, ok: bool) -> None:
         self.api_dot.delete("all")
         self.api_dot.create_oval(0, 0, 8, 8, fill=GREEN if ok else RED, outline="")
-        self.api_label.configure(text="Yerel köprü" if ok else "Köprü kapalı")
+        self.api_label.configure(text=t("bridge.title") if ok else t("bridge.down"))
         self.api_label.configure(fg=TEXT_DIM if ok else RED)
 
     def _update_banner(self) -> None:
         if self.server_error:
             self.banner_label.configure(
-                text=(
-                    f"Yerel köprü başlatılamadı: {self.server_error}  ·  "
-                    f"{API_PORT} portu başka bir uygulama tarafından kullanılıyor olabilir. "
-                    "Tarayıcı eklentisi bağlanamaz."
-                )
+                text=t("bridge.banner_error", error=self.server_error, port=API_PORT)
             )
             self.banner.pack(fill="x", padx=26, pady=(12, 0), before=self.content)
         else:
@@ -625,7 +622,7 @@ class VideoAvciApp(tk.Tk):
 
     def retry_server(self) -> None:
         if self.server is not None:
-            self.toast("Yerel köprü zaten çalışıyor.", "info")
+            self.toast(t("toast.bridge_running"), "info")
             return
         try:
             server = ApiServer(self.manager)
@@ -633,19 +630,19 @@ class VideoAvciApp(tk.Tk):
         except OSError as exc:
             self.server_error = str(exc)
             self._update_banner()
-            self.toast(f"Köprü hâlâ başlatılamıyor: {exc}", "error")
+            self.toast(t("toast.bridge_still_down", error=exc), "error")
             return
         except Exception as exc:
             self.server_error = str(exc)
             self._update_banner()
-            self.toast(f"Köprü başlatılamadı: {exc}", "error")
+            self.toast(t("toast.bridge_failed", error=exc), "error")
             return
         self.server = server
         self.server_error = ""
         self._update_banner()
         self._paint_api_status(True)
         self.pages["extension"].refresh_status(True)
-        self.toast("Yerel köprü yeniden başlatıldı.", "success")
+        self.toast(t("toast.bridge_restarted"), "success")
 
     # ------------------------------------------------------------------ görevler
     def pause_task(self, task_id: str) -> None:
@@ -667,7 +664,7 @@ class VideoAvciApp(tk.Tk):
     def redownload_task(self, task_id: str) -> None:
         task = self.manager.get_task(task_id)
         if task is None:
-            self.toast("Görev bulunamadı.", "warning")
+            self.toast(t("toast.task_not_found"), "warning")
             return
         try:
             new_task, duplicate = self.manager.add_url(
@@ -679,32 +676,32 @@ class VideoAvciApp(tk.Tk):
                 referer=task.referer,
             )
         except Exception as exc:
-            self.toast(f"Yeniden indirilemedi: {exc}", "error")
+            self.toast(t("toast.redownload_failed", error=exc), "error")
             return
         if duplicate:
-            self.toast("Bu bağlantı zaten kuyrukta.", "warning")
+            self.toast(t("toast.already_in_queue"), "warning")
         else:
-            self.toast(f"Kuyruğa eklendi: {new_task.display_title()}", "success")
+            self.toast(t("toast.capture_download_started", title=new_task.display_title()), "success")
         self.refresh_now()
 
     def remove_task(self, task_id: str) -> None:
         if not self.manager.remove_task(task_id):
-            self.toast("Aktif bir indirme kaldırılamaz; önce iptal edin.", "warning")
+            self.toast(t("toast.active_remove"), "warning")
             return
         self.refresh_now()
 
     def open_task_file(self, task_id: str) -> None:
         task = self.manager.get_task(task_id)
         if task is None or not task.filepath:
-            self.toast("Dosya yolu bulunamadı.", "warning")
+            self.toast(t("toast.file_not_found"), "warning")
             return
         if not Path(task.filepath).exists():
-            self.toast("Dosya diskte bulunamadı.", "error")
+            self.toast(t("toast.file_missing"), "error")
             return
         try:
             open_path(task.filepath)
         except Exception as exc:
-            self.toast(f"Dosya açılamadı: {exc}", "error")
+            self.toast(t("toast.file_open_failed", error=exc), "error")
 
     def open_task_folder(self, task_id: str) -> None:
         task = self.manager.get_task(task_id)
@@ -712,19 +709,19 @@ class VideoAvciApp(tk.Tk):
         try:
             open_in_file_manager(target)
         except Exception as exc:
-            self.toast(f"Klasör açılamadı: {exc}", "error")
+            self.toast(t("toast.folder_open_failed", error=exc), "error")
 
     def extract_audio(self, task_id: str) -> None:
         task = self.manager.get_task(task_id)
         if task is None or not task.filepath or not Path(task.filepath).exists():
-            self.toast("Dosya bulunamadı.", "warning")
+            self.toast(t("toast.file_missing_warn"), "warning")
             return
         src = Path(task.filepath)
         dst = src.with_suffix(".mp3")
         if dst.exists():
-            self.toast("MP3 zaten var.", "info")
+            self.toast(t("toast.audio_exists"), "info")
             return
-        self.toast("Ses çıkarılıyor…", "info")
+        self.toast(t("toast.audio_extracting"), "info")
 
         def worker():
             try:
@@ -734,9 +731,9 @@ class VideoAvciApp(tk.Tk):
                     stderr=subprocess.DEVNULL,
                     check=True,
                 )
-                self.post(lambda: self.toast(f"MP3 oluşturuldu: {dst.name}", "success"))
+                self.post(lambda: self.toast(t("toast.audio_done", name=dst.name), "success"))
             except Exception as exc:
-                self.post(lambda: self.toast(f"Ses çıkarılamadı: {exc}", "error"))
+                self.post(lambda: self.toast(t("toast.audio_failed", error=exc), "error"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -754,12 +751,12 @@ class VideoAvciApp(tk.Tk):
             self.toast(str(exc), "error")
             return
         except Exception as exc:
-            self.toast(f"İndirme başlatılamadı: {exc}", "error")
+            self.toast(t("toast.download_failed", error=exc), "error")
             return
         if duplicate:
-            self.toast("Bu video zaten kuyrukta.", "warning")
+            self.toast(t("toast.already_queued"), "warning")
         else:
-            self.toast(f"İndirme başlatıldı: {task.display_title()}", "success")
+            self.toast(t("toast.download_started", title=task.display_title()), "success")
         self.show_page("downloads")
 
     def remove_capture(self, capture_id: str) -> None:
@@ -814,7 +811,7 @@ class VideoAvciApp(tk.Tk):
         if self._closing:
             return
         self._closing = True
-        self.title("Abrek Download — kapatılıyor…")
+        self.title(t("app.closing"))
         try:
             self.cfg.set("window_geometry", self.geometry())
             self.cfg.save()
@@ -862,17 +859,17 @@ def show_already_running() -> None:
         root.withdraw()
         messagebox.showinfo(
             APP_NAME,
-            f"{APP_NAME} zaten çalışıyor.\nAçık pencereyi görev çubuğundan veya uygulama menüsünden açabilirsiniz.",
+            t("app.already_running"),
             parent=root,
         )
         root.destroy()
     except Exception:
-        print("Abrek Download zaten çalışıyor.", file=sys.stderr)
+        print(t("app.already_running_stderr"), file=sys.stderr)
 
 
 def main() -> int:
     setup_logging()
-    log.info("Abrek Download başlatılıyor (sürüm %s)", VERSION)
+    log.info("Abrek Download starting (version %s)", VERSION)
 
     lock = acquire_instance_lock()
     if lock is False:

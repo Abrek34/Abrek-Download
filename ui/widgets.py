@@ -6,6 +6,7 @@ import os
 import tkinter as tk
 from tkinter import ttk
 
+from core.i18n import t
 from core.utils import human_duration, human_eta, human_size, human_speed
 
 from . import theme
@@ -175,7 +176,7 @@ class TaskCard(tk.Frame):
 
         self.status_label = tk.Label(
             header,
-            text="Sırada",
+            text=t("task.status.queued"),
             bg=status_tint("queued"),
             fg=status_color("queued"),
             font=font(8, "bold"),
@@ -243,8 +244,9 @@ class TaskCard(tk.Frame):
         ]
         self.meta_label.configure(text="   ·   ".join(part for part in meta_parts if part))
 
+        status_text = data.get("status_label") or t(f"task.status.{status}")
         self.status_label.configure(
-            text=data.get("status_label") or status,
+            text=status_text,
             bg=status_tint(status),
             fg=color,
         )
@@ -276,19 +278,19 @@ class TaskCard(tk.Frame):
             if speed and status not in {"pausing", "canceling"}:
                 parts.append(human_speed(speed))
             if eta and status not in {"pausing", "canceling"}:
-                parts.append(f"{human_eta(eta)} kaldı")
+                parts.append(t("task.info.eta_left", eta=human_eta(eta)))
             if detail:
                 parts.append(detail)
-            return ellipsize("   ·   ".join(parts) or detail or "Çalışıyor", 120)
+            return ellipsize("   ·   ".join(parts) or detail or t("task.info.working"), 120)
         if status == "queued":
-            return ellipsize(detail or "Sırada bekliyor", 120)
+            return ellipsize(detail or t("task.info.waiting"), 120)
         if status == "paused":
             parts = []
             if total:
                 parts.append(f"{human_size(downloaded)} / {human_size(total)}")
             elif downloaded:
                 parts.append(human_size(downloaded))
-            parts.append(detail or "Duraklatıldı")
+            parts.append(detail or t("task.status.paused"))
             return ellipsize("   ·   ".join(parts), 120)
         if status == "completed":
             parts = []
@@ -296,10 +298,10 @@ class TaskCard(tk.Frame):
                 parts.append(human_size(total))
             if data.get("filepath"):
                 parts.append(os.path.basename(str(data["filepath"])))
-            return ellipsize("   ·   ".join(parts) or "Tamamlandı", 130)
+            return ellipsize("   ·   ".join(parts) or t("task.status.completed"), 130)
         if status == "error":
-            return ellipsize(data.get("error") or "Bilinmeyen hata", 150)
-        return ellipsize(detail or "İptal edildi", 120)
+            return ellipsize(data.get("error") or t("task.info.unknown_error"), 150)
+        return ellipsize(detail or t("task.status.canceled"), 120)
 
     def _draw_progress(self) -> None:
         draw_progress(self.progress, self._percent, self._progress_color)
@@ -314,26 +316,26 @@ class TaskCard(tk.Frame):
 
         actions: list[tuple[str, str, str]] = []
         if status in {"queued", "starting", "analyzing", "downloading", "processing"}:
-            actions.append(("Duraklat", "pause", "ghost"))
-            actions.append(("İptal", "cancel", "danger"))
+            actions.append((t("downloads.action.pause"), "pause", "ghost"))
+            actions.append((t("downloads.action.cancel"), "cancel", "danger"))
         elif status in {"pausing", "canceling"}:
-            label = "Duraklatılıyor" if status == "pausing" else "İptal ediliyor"
+            label = t("task.action.pausing") if status == "pausing" else t("task.action.canceling")
             actions.append((label, "", "subtle"))
         elif status == "paused":
-            actions.append(("Devam et", "resume", "primary"))
-            actions.append(("İptal", "cancel", "danger"))
+            actions.append((t("downloads.action.resume"), "resume", "primary"))
+            actions.append((t("downloads.action.cancel"), "cancel", "danger"))
         elif status in {"error", "canceled"}:
-            actions.append(("Yeniden dene", "retry", "primary"))
+            actions.append((t("downloads.action.retry"), "retry", "primary"))
             if has_error:
-                actions.append(("Ayrıntı", "details", "ghost"))
-            actions.append(("Kaldır", "remove", "ghost"))
+                actions.append((t("downloads.action.details"), "details", "ghost"))
+            actions.append((t("downloads.action.remove"), "remove", "ghost"))
         elif status == "completed":
             if has_file:
-                actions.append(("Oynat", "open", "primary"))
-                actions.append(("Klasör", "folder", "ghost"))
-                actions.append(("Sesi çıkar", "audio", "ghost"))
-            actions.append(("Yeniden indir", "redownload", "ghost"))
-            actions.append(("Kaldır", "remove", "ghost"))
+                actions.append((t("downloads.action.play"), "open", "primary"))
+                actions.append((t("downloads.action.folder"), "folder", "ghost"))
+                actions.append((t("downloads.action.extract_audio"), "audio", "ghost"))
+            actions.append((t("downloads.action.redownload"), "redownload", "ghost"))
+            actions.append((t("downloads.action.remove"), "remove", "ghost"))
 
         for text, action, kind in reversed(actions):
             if action:
@@ -422,7 +424,7 @@ class CaptureCard(tk.Frame):
         if data.get("size"):
             meta_parts.append(human_size(data.get("size")))
         if data.get("page_title") and data.get("page_title") != data.get("title"):
-            meta_parts.append("sayfa: " + ellipsize(data.get("page_title"), 42))
+            meta_parts.append(t("captures.source_page") + ellipsize(data.get("page_title"), 42))
         tk.Label(
             meta_row,
             text="   ·   ".join(part for part in meta_parts if part),
@@ -446,7 +448,7 @@ class CaptureCard(tk.Frame):
         buttons.pack(side="right", padx=(12, 0), anchor="n")
         make_button(
             buttons,
-            "İndir",
+            t("captures.download"),
             lambda: self.app.download_capture(str(data.get("id") or "")),
             kind="primary",
             size=9,
@@ -454,7 +456,7 @@ class CaptureCard(tk.Frame):
         ).pack(side="right")
         make_button(
             buttons,
-            "Kaldır",
+            t("captures.remove"),
             lambda: self.app.remove_capture(str(data.get("id") or "")),
             kind="ghost",
             size=9,
@@ -502,7 +504,7 @@ class EmptyState(tk.Frame):
 def show_details_dialog(parent: tk.Misc, data: dict) -> None:
     """Hata ve günlük ayrıntılarını gösteren koyu pencere."""
     window = tk.Toplevel(parent)
-    window.title("Görev ayrıntıları")
+    window.title(t("details.title"))
     window.configure(bg=BG)
     window.geometry("760x520")
     window.minsize(560, 360)
@@ -512,7 +514,7 @@ def show_details_dialog(parent: tk.Misc, data: dict) -> None:
     header.pack(fill="x", padx=22, pady=(20, 12))
     tk.Label(
         header,
-        text=ellipsize(data.get("display_title") or "Görev", 70),
+        text=ellipsize(data.get("display_title") or t("details.default_title"), 70),
         bg=BG,
         fg=TEXT,
         font=font(14, "bold"),
@@ -549,30 +551,32 @@ def show_details_dialog(parent: tk.Misc, data: dict) -> None:
     body.pack(side="left", fill="both", expand=True)
     scrollbar.configure(command=body.yview)
 
+    status_label_str = data.get('status_label') or ''
+    status_raw = data.get('status') or ''
     lines = [
-        f"Durum     : {data.get('status_label') or ''} ({data.get('status') or ''})",
-        f"Bağlantı  : {data.get('url') or ''}",
+        f"{t('details.status'):10}: {status_label_str} ({status_raw})",
+        f"{t('details.url'):10}: {data.get('url') or ''}",
     ]
     if data.get("page_url"):
-        lines.append(f"Sayfa     : {data.get('page_url')}")
+        lines.append(f"{t('details.page'):10}: {data.get('page_url')}")
     if data.get("filepath"):
-        lines.append(f"Dosya     : {data.get('filepath')}")
+        lines.append(f"{t('details.file'):10}: {data.get('filepath')}")
     if data.get("extractor"):
-        lines.append(f"Kaynak    : {data.get('extractor')}")
+        lines.append(f"{t('details.source'):10}: {data.get('extractor')}")
     if data.get("error"):
         lines.append("")
-        lines.append("HATA")
+        lines.append(t("details.error_heading"))
         lines.append(str(data.get("error")))
     if data.get("log_tail"):
         lines.append("")
-        lines.append("GÜNLÜK")
+        lines.append(t("details.log_heading"))
         lines.append(str(data.get("log_tail")).strip())
     body.insert("1.0", "\n".join(lines))
     body.configure(state="disabled")
 
     footer = tk.Frame(window, bg=BG)
     footer.pack(fill="x", padx=22, pady=(0, 20))
-    make_button(footer, "Kapat", window.destroy, kind="subtle", size=9).pack(side="right")
+    make_button(footer, t("details.close"), window.destroy, kind="subtle", size=9).pack(side="right")
 
     window.update_idletasks()
     try:
