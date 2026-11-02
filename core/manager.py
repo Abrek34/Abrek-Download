@@ -130,6 +130,9 @@ class DownloadManager:
                 if not is_http_url(capture.url) or capture.url in seen:
                     continue
                 seen.add(capture.url)
+                # Eski etiketleri yeniden analiz et.
+                if capture.media_kind == "manifest":
+                    capture.media_info = ""
                 self.captures.append(capture)
             self.captures.sort(key=lambda capture: capture.created_at, reverse=True)
             self.captures = self.captures[:200]
@@ -380,8 +383,8 @@ class DownloadManager:
                 return
 
             formats = info.get("formats") or [info]
-            has_video = any(str(f.get("vcodec") or "").lower() not in ("", "none") for f in formats)
-            has_audio = any(str(f.get("acodec") or "").lower() not in ("", "none") for f in formats)
+            has_video = any(str(f.get("video_ext") or "").lower() not in ("", "none", None) for f in formats) or str(info.get("video_ext") or "").lower() not in ("", "none", None)
+            has_audio = any(str(f.get("audio_ext") or "").lower() not in ("", "none", None) for f in formats) or str(info.get("audio_ext") or "").lower() not in ("", "none", None)
 
             heights = sorted(
                 {int(f.get("height")) for f in formats if isinstance(f.get("height"), int) and f.get("height")},
@@ -396,8 +399,11 @@ class DownloadManager:
                 media_info = self._resolution_from_url(url)
                 if not media_info and has_audio and not has_video:
                     media_info = "ses"
-            if original_kind in {"hls", "dash"} and has_audio:
-                media_info = (media_info + " · ses").strip() if media_info else "ses"
+            if original_kind in {"hls", "dash"}:
+                if has_audio:
+                    media_info = (media_info + " · sesli").strip() if media_info else "sesli"
+                else:
+                    media_info = (media_info + " · sessiz").strip() if media_info else "sessiz"
 
             if original_kind in {"hls", "dash"}:
                 new_kind = "manifest"
