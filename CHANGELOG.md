@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.8.9 — 2026-11-02
+
+### Yeni özellikler
+
+- **Genel site desteği:** Ağırlıklı olarak `<video>` içeren sayfalarda (film
+  siteleri vb.) sayfa bağlantısı da yakalama olarak eklenir; böylece film
+  sitelerinde ⬇ düğmesi tıklandığında "Yakalanan medya yok" yerine sayfa
+  yakalaması listelenir ve yt-dlp ile indirilebilir.
+
 ## 1.8.8 — 2026-11-02
 
 ### Düzeltmeler

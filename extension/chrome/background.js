@@ -158,9 +158,9 @@ function isVideoPageUrl(url) {
   return false;
 }
 
-async function checkAndAddVideoPage(tabId, pageUrl, pageTitle) {
+async function checkAndAddVideoPage(tabId, pageUrl, pageTitle, hasVideo = false) {
   if (await isCapturePaused()) return;
-  if (!isVideoPageUrl(pageUrl)) return;
+  if (!isVideoPageUrl(pageUrl) && !hasVideo) return;
   await withLock(`tab:${tabId}`, async () => {
     const record = await readTab(tabId);
     record.pageUrl = pageUrl;
@@ -208,9 +208,11 @@ async function checkAndAddVideoPage(tabId, pageUrl, pageTitle) {
 
 function classify(contentType, url) {
   const ct = String(contentType || '').toLowerCase().split(';')[0].trim();
-  if (ct.includes('mpegurl') || /\.m3u8(?:$|[?#])/i.test(url)) return 'hls';
-  if (ct.includes('dash+xml') || /\.mpd(?:$|[?#])/i.test(url)) return 'dash';
+  if (/\.m3u8(?:$|[?#])/i.test(url) || ct.includes('mpegurl')) return 'hls';
+  if (/\.mpd(?:$|[?#])/i.test(url) || ct.includes('dash+xml')) return 'dash';
   if (ct.startsWith('video/') || ct.startsWith('audio/') || MEDIA_EXT.test(url)) return 'direct';
+  // Bazı CDN'ler video/mp4 yerine application/octet-stream döner; uzantı varsa yakala.
+  if (/\.(mp4|webm|mkv|mov|m4v|avi|flv|ogv|mp3|m4a|aac|ogg|opus|wav|flac)(?:$|[?#])/i.test(url)) return 'direct';
   return null;
 }
 
@@ -482,7 +484,7 @@ ext.webRequest.onHeadersReceived.addListener(
     // Aralık (range) istekleri de yakalanır; aynı URL için tekrar yakalama
     // handleDetection içindeki tekilleştirme ile engellenir.
     if (size > 0 && size < MIN_DIRECT_SIZE && !MANIFEST_EXT.test(details.url) && !contentRange) return;
-    if (!contentType && !MEDIA_EXT.test(details.url) && !MANIFEST_EXT.test(details.url)) return;
+    if (!MANIFEST_EXT.test(details.url) && !contentType && !MEDIA_EXT.test(details.url)) return;
     if (contentType.includes('text/html') || contentType.includes('application/xhtml')) return;
     handleDetection(
       details.tabId,
@@ -558,7 +560,12 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await setBadge(tabId, record.items.length);
     })
       .then(() => {
-        checkAndAddVideoPage(tabId, message.pageUrl || (tab && tab.url) || '', message.pageTitle || (tab && tab.title) || '').catch(() => {});
+        checkAndAddVideoPage(
+          tabId,
+          message.pageUrl || (tab && tab.url) || '',
+          message.pageTitle || (tab && tab.title) || '',
+          !!message.hasVideo,
+        ).catch(() => {});
         sendResponse({ ok: true });
       })
       .catch(() => sendResponse({ ok: false }));

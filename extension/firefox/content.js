@@ -69,7 +69,12 @@
     const pageKey = location.href + '\n' + document.title;
     if (pageKey !== lastPage) {
       lastPage = pageKey;
-      send({ type: 'page-info', pageUrl: location.href, pageTitle: document.title });
+      send({
+        type: 'page-info',
+        pageUrl: location.href,
+        pageTitle: document.title,
+        hasVideo: !!document.querySelector('video'),
+      });
     }
   }
 
