@@ -420,6 +420,13 @@ class DownloadManager:
             capture = next((item for item in self.captures if item.id == capture_id), None)
             if capture is None:
                 return
+            # Zaten probe edilmiş ve son 24 saattir geçmemişse tekrar probe etme.
+            last_probe = getattr(capture, "_probe_timestamp", 0)
+            if capture.media_kind == "manifest" and capture.media_info and \
+               (time.time() - last_probe) < 86400:  # 24 * 3600
+                return
+            # Probe zamanını fresh tut.
+            capture._probe_timestamp = time.time()
             if capture.media_kind not in ("", "video", "manifest"):
                 return
             if capture.media_kind == "manifest" and capture.media_info:
@@ -952,19 +959,27 @@ class DownloadManager:
         try:
             import json as _json
             import subprocess as _sp
-            cmd = [sys.executable and "yt-dlp" or "yt-dlp"]
         except Exception:
-            cmd = ["yt-dlp"]
-        # yt-dlp binary'sini .venv içinden bul.
-        ytdlp_bin = str(Path(self.config.download_dir).parent / "bin" / "yt-dlp")
-        # Fallback: PATH'teki yt-dlp.
-        import shutil as _shutil
-        if not Path(ytdlp_bin).exists():
-            ytdlp_bin = _shutil.which("yt-dlp") or "yt-dlp"
-        # Proje .venv içindeki yt-dlp'yi tercih et.
-        venv_ytdlp = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "yt-dlp"
-        if venv_ytdlp.exists():
-            ytdlp_bin = str(venv_ytdlp)
+            return False, False
+        # yt-dlp binary'sini öncelikle şu sırayla bul:
+        #   1) .venv içindeki yt-dlp
+        #   2) proje kökündeki bin/yt-dlp
+        #   3) PATH'teki yt-dlp
+        possible: list[pathlib.PurePath] = [
+            Path(__file__).resolve().parents[1] / ".venv" / "bin" / "yt-dlp",
+            Path.cwd() / "bin" / "yt-dlp",
+        ]
+        ytdlp_bin: str = "yt-dlp"  # fallback: sistem PATH'i
+        for p in possible:
+            if p.exists():
+                ytdlp_bin = str(p)
+                break
+        else:
+            import shutil as _shutil
+            sys_path_yt = _shutil.which("yt-dlp")
+            if sys_path_yt:
+                ytdlp_bin = sys_path_yt
+
         try:
             result = subprocess.run(
                 [ytdlp_bin, "--dump-single-json", "--no-playlist", "--no-warnings", url],
@@ -978,7 +993,10 @@ class DownloadManager:
         if result.returncode != 0 or not result.stdout:
             return False, False
         try:
-            info = _json.loads(result.stdout.strip().splitlines()[-1])
+            # yt-dlp çıktı genellikle tek satır JSON; satır sonu chars'a rağmen
+            # bazen birden fazla satır olabilir; son satırı al.
+            lines = result.stdout.strip().splitlines()
+            info = _json.loads(lines[-1])
         except Exception:
             try:
                 info = _json.loads(result.stdout.strip())
@@ -996,9 +1014,11 @@ class DownloadManager:
         return audio, video
 
     def _find_matching_audio(self, task: "DownloadTask") -> str:
-        """Aynı sayfa için farklı bir HLS yakalaması varsa URL'sini döner.
-        Ses/görüntü ayrımı yt-dlp tarafından reliable olmayan için, sayfa URL'si
-        ve URL farklılığıyla eşleşen başka bir hls yakalama varsayılır complementer."""
+        """Aynı sayfa için ses‑only HLS yakalaması varsa URL'sini döner.
+        yt-dlp audio_ext/video_ext reliable ayrılamadığı için; önce her yakalamanın
+        sesli olup olmadığını _probe_av ile kontrol eder; sesli ilk bulunanu döndürür.
+        Eşleşme yoksa None döner (çoğu durumda calling code bunu yorumlar ve normal
+        indirme yoluna döner)."""
         if not task.page_url:
             return ""
         with self.lock:
@@ -1006,7 +1026,12 @@ class DownloadManager:
                 c for c in self.captures
                 if c.page_url == task.page_url and c.kind in ("hls", "dash") and c.url != task.url
             ]
-        # En az bir eşleşme varsa onu döndür (varsa kullanıcıya gösterilebilir).
+        # Her yakalamayı ses/video olarak probe et; sesli ilkini döndür.
+        for cap in candidates:
+            audio, video = self._probe_av(cap.url)
+            if audio and not video:
+                return cap.url
+        # Eğer hiçbiri sesli değilse de bir eşleşme varsa, en yakın olanı (ilkini) döndür.
         if candidates:
             return candidates[0].url
         return ""
@@ -1022,25 +1047,40 @@ class DownloadManager:
             self._log_callback(task_id),
             self._metadata_callback(task_id),
         )
-        with self.lock:
-            self.controllers[task_id] = downloader
-            if task_id in self.pause_requested:
-                downloader.pause()
-            if task_id in self.cancel_requested:
-                downloader.cancel()
         try:
+            with self.lock:
+                self.controllers[task_id] = downloader
+                if task_id in self.pause_requested:
+                    downloader.pause()
+                if task_id in self.cancel_requested:
+                    downloader.cancel()
             return downloader.run()
+        except Exception:
+            # URL'yi orijinaline geri yükle; hata durumunda yukarı akışın
+            # _run_task exception handling'inide tetikleyebilir.
+            raise
         finally:
+            # finally her zaman çalışsın; exception oldu olmadı task.url'u sıfırla.
             task.url = orig_url
 
     def _merge_av(self, video_path: str, audio_path: str) -> str:
+        """ffmpeg ile video+audi birleştir; başarısız olursa video‑only döndürür."""
         import shutil as _shutil
         from pathlib import Path as _Path
+        import subprocess as _sub
         video_p = _Path(video_path)
         audio_p = _Path(audio_path)
         out = video_p.with_name(video_p.stem + "_merged.mp4")
-        cmd = ["ffmpeg", "-y", "-i", str(video_p), "-i", str(audio_p), "-c", "copy", str(out)]
-        subprocess.run(cmd, check=True, capture_output=True)
+        try:
+            cmd = ["ffmpeg", "-y", "-i", str(video_p), "-i", str(audio_p), "-c", "copy", str(out)]
+            _sub.run(cmd, check=True, capture_output=True)
+        except _sub.CalledProcessError:
+            # copy modu başarısızsa (nadir); orijinal videoyi geri döndürüp hata ver.
+            try:
+                video_p.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise RuntimeError("FFmpeg merge failed; returning video‑only file.")
         # Temizlik: orijinal video ve ses dosyalarını sil.
         try:
             video_p.unlink(missing_ok=True)
