@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,10 @@ APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
 VERSION = "1.0.0"
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    PROJECT_DIR = Path(sys._MEIPASS)
+else:
+    PROJECT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = Path.home() / ".config" / APP_SLUG
 DATA_DIR = Path.home() / ".local" / "share" / APP_SLUG
 STATE_DIR = Path.home() / ".local" / "state" / APP_SLUG

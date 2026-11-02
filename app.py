@@ -16,6 +16,15 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import messagebox
 
+try:
+    import pystray
+    from PIL import Image as PILImage
+    TRAY_AVAILABLE = True
+except Exception:
+    pystray = None
+    PILImage = None
+    TRAY_AVAILABLE = False
+
 from core.config import (
     API_HOST,
     API_PORT,
@@ -120,6 +129,7 @@ class VideoAvciApp(tk.Tk):
         self._nav_counts = {"downloads": 0, "captures": 0}
         self._toast_after = None
         self._notified_completed: set[str] = set()
+        self._tray_icon = None
 
         self.title("Abrek Download — Video İndirici")
         self.configure(bg=BG)
@@ -131,6 +141,7 @@ class VideoAvciApp(tk.Tk):
         self._build_layout()
         self._bind_events()
         self.show_page("downloads")
+        self._start_tray()
         self._paint_api_status(server is not None)
         if server is None:
             self._update_banner()
@@ -364,6 +375,8 @@ class VideoAvciApp(tk.Tk):
         self.bind_all("<Button-5>", self._on_mousewheel)
         self.bind_all("<MouseWheel>", self._on_mousewheel)
         self.bind("<Control-n>", lambda _event: self._focus_url())
+        self.bind("<Control-l>", lambda _event: self._focus_url())
+        self.bind("<Control-o>", lambda _event: self._open_download_folder())
         self.bind("<Control-q>", lambda _event: self.on_close())
         self.bind("<F5>", lambda _event: self.refresh_now())
 
@@ -385,6 +398,54 @@ class VideoAvciApp(tk.Tk):
     def _focus_url(self) -> None:
         self.show_page("downloads")
         self.pages["downloads"].focus_url()
+
+    def _open_download_folder(self) -> None:
+        try:
+            open_in_file_manager(self.cfg.download_dir)
+        except Exception as exc:
+            self.toast(f"Klasör açılamadı: {exc}", "error")
+
+    def _start_tray(self) -> None:
+        if not TRAY_AVAILABLE:
+            return
+        try:
+            icon_path = PROJECT_DIR / "assets" / "icon.png"
+            image = PILImage.open(icon_path)
+
+            def on_show(icon, item):
+                self.after(0, self._show_from_tray)
+
+            def on_quit(icon, item):
+                icon.stop()
+                self.after(0, self.on_close)
+
+            menu = pystray.Menu(
+                pystray.MenuItem("Göster", on_show, default=True),
+                pystray.MenuItem("Klasörü aç", lambda icon, item: self.after(0, lambda: open_in_file_manager(self.cfg.download_dir))),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Çıkış", on_quit),
+            )
+            self._tray_icon = pystray.Icon("AbrekDownload", image, "Abrek Download", menu)
+            threading.Thread(target=self._tray_icon.run, daemon=True).start()
+        except Exception:
+            log.exception("Sistem tepsisi başlatılamadı")
+
+    def _show_from_tray(self) -> None:
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    def _stop_tray(self) -> None:
+        icon = self._tray_icon
+        self._tray_icon = None
+        if icon is not None:
+            try:
+                icon.stop()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ gezinme
     def show_page(self, key: str) -> None:
@@ -744,6 +805,7 @@ class VideoAvciApp(tk.Tk):
                 log.exception("API sunucusu kapatılamadı")
             self.server = None
         self._closed_cleanly = True
+        self._stop_tray()
         try:
             self.destroy()
         except tk.TclError:
