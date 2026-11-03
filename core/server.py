@@ -41,6 +41,36 @@ def host_allowed(value: str | None) -> bool:
     return value.strip().lower() in ALLOWED_HOSTS
 
 
+def origin_allowed(origin: str | None) -> bool:
+    """Yalnızca tarayıcı eklentisi ve yerel panodan gelen istekleri kabul et.
+
+    ``Origin: null`` (sandbox edilmiş iframe, file:// vb.) reddedilir; aksi
+    halde herhangi bir site bu köprü üzerinden indirme başlatabilirdi.
+    """
+    if not origin:
+        return True
+    origin = origin.strip()
+    if not origin or origin == "null":
+        return False
+    for prefix in ALLOWED_ORIGIN_PREFIXES:
+        if origin.startswith(prefix):
+            # Boş "chrome-extension://" gibi geçersiz kaynakları kabul etme.
+            return len(origin) > len(prefix)
+    if origin in {
+        f"http://{API_HOST}:{API_PORT}",
+        f"http://localhost:{API_PORT}",
+    }:
+        return True
+    return False
+
+
+class ApiHttpServer(ThreadingHTTPServer):
+    # Soket seçenekleri sunucu kurulmadan önce sınıf düzeyinde tanımlanmalı;
+    # aksi halde yeniden başlatmalarda "address already in use" görülebilir.
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     manager: DownloadManager
     server_version = "VideoAvciAPI/1.0"
@@ -54,29 +84,29 @@ class ApiHandler(BaseHTTPRequestHandler):
         return self.headers.get("Origin")
 
     def _origin_allowed(self, origin: str | None) -> bool:
-        if not origin or origin == "null":
-            return True
-        if origin.startswith(ALLOWED_ORIGIN_PREFIXES):
-            return True
-        if origin in {
-            f"http://{API_HOST}:{API_PORT}",
-            f"http://localhost:{API_PORT}",
-        }:
-            return True
-        return False
+        return origin_allowed(origin)
 
     def _cors_headers(self) -> dict[str, str]:
         origin = self._origin()
-        if origin and self._origin_allowed(origin):
-            allow_origin = origin
-        else:
-            allow_origin = "*"
-        return {
-            "Access-Control-Allow-Origin": allow_origin,
+        headers = {
             "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
             "Access-Control-Max-Age": "86400",
             "Vary": "Origin",
+        }
+        if origin and origin_allowed(origin):
+            headers["Access-Control-Allow-Origin"] = origin
+        elif not origin:
+            headers["Access-Control-Allow-Origin"] = "*"
+        return headers
+
+    @staticmethod
+    def _security_headers() -> dict[str, str]:
+        return {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
         }
 
     def _send_json(self, status: int, data: Any) -> None:
@@ -85,7 +115,14 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
+        if status >= 400:
+            # Hata yanıtlarında istek gövdesi okunmamış olabilir; HTTP/1.1
+            # bağlantısını kapatarak artık baytların sonraki istek sanılmasını
+            # engelle.
+            self.close_connection = True
+            self.send_header("Connection", "close")
+        for key, value in self._security_headers().items():
+            self.send_header(key, value)
         for key, value in self._cors_headers().items():
             self.send_header(key, value)
         self.end_headers()
@@ -100,6 +137,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        for key, value in self._security_headers().items():
+            self.send_header(key, value)
         self.end_headers()
         try:
             self.wfile.write(payload)
@@ -222,6 +261,28 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "duplicate": duplicate, "task": task.snapshot()})
             return
 
+        if path.startswith("/api/tasks/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 4:
+                _, _, raw_task_id, action = parts
+                task_id = unquote(raw_task_id)
+                actions = {
+                    "pause": self.manager.pause_task,
+                    "resume": self.manager.resume_task,
+                    "cancel": self.manager.cancel_task,
+                    "retry": self.manager.retry_task,
+                }
+                handler = actions.get(action)
+                if handler is not None:
+                    task = self.manager.get_task(task_id)
+                    if task is None:
+                        self._send_json(404, {"ok": False, "error": "Görev bulunamadı."})
+                        return
+                    handler(task_id)
+                    task = self.manager.get_task(task_id)
+                    self._send_json(200, {"ok": True, "task": task.snapshot() if task else None})
+                    return
+
         self._send_json(404, {"ok": False, "error": "Bulunamadı."})
 
     def do_DELETE(self) -> None:
@@ -282,9 +343,7 @@ class ApiServer:
         self.host = host
         self.port = port
         handler = type("BoundApiHandler", (ApiHandler,), {"manager": manager})
-        self.httpd = ThreadingHTTPServer((host, port), handler)
-        self.httpd.daemon_threads = True
-        self.httpd.allow_reuse_address = True
+        self.httpd = ApiHttpServer((host, port), handler)
         self.thread = threading.Thread(
             target=self.httpd.serve_forever,
             kwargs={"poll_interval": 0.3},

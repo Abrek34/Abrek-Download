@@ -281,5 +281,16 @@
   "server.title": "Abrek Download Yerel Köprü",
   "server.heading": "▶ Abrek Download",
   "language.label": "Dil",
-  "language.hint": "Arayüz dili. Değişiklik yeniden başlatma gerektirir."
+  "language.hint": "Arayüz dili. Değişiklik yeniden başlatma gerektirir.",
+  "cli.help": "Abrek Download {version}\n\nKullanım:\n  abrek-download [URL]\n\nSeçenekler:\n  -h, --help      Bu yardımı göster\n  -V, --version   Sürümü göster\n\nBir URL verilirse uygulama açılırken bağlantı kuyruğa eklenir.\nUygulama zaten çalışıyorsa bağlantı çalışan kuyruğa gönderilir.",
+  "cli.version": "Abrek Download {version}",
+  "stats.capture_paused": "yakalama duraklatıldı",
+  "downloads.open_folder": "Klasörü aç",
+  "captures.pause": "Yakalamayı duraklat",
+  "captures.resume": "Yakalamayı sürdür",
+  "captures.paused_toast": "Tarayıcı yakalaması duraklatıldı.",
+  "captures.resumed_toast": "Tarayıcı yakalaması sürdürüldü.",
+  "captures.copy": "Bağlantıyı kopyala",
+  "captures.copied": "Bağlantı kopyalandı.",
+  "settings.restart_required": "Tema/dil değişikliği uygulamayı yeniden başlatınca etkin olur."
 }

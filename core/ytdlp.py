@@ -162,6 +162,7 @@ class YtDlpDownloader:
         status_cb: StatusCallback,
         log_cb: LogCallback | None = None,
         metadata_cb: MetadataCallback | None = None,
+        audio_only: bool = False,
     ):
         self.task = task
         self.config = config
@@ -169,6 +170,7 @@ class YtDlpDownloader:
         self.status_cb = status_cb
         self.log_cb = log_cb or (lambda _line: None)
         self.metadata_cb = metadata_cb or (lambda _meta: None)
+        self.audio_only = audio_only
 
         self.pause_event = threading.Event()
         self.cancel_event = threading.Event()
@@ -336,6 +338,10 @@ class YtDlpDownloader:
             pass
 
         template = str(output_dir / "%(title).150B [%(id)s].%(ext)s")
+        if self.audio_only:
+            # Aynı video kimliğiyle indirilen ses dosyası video dosyasının
+            # üzerine yazmasın diye ayrı bir ad kullan.
+            template = str(output_dir / "%(title).150B [%(id)s].audio.%(ext)s")
         cmd = ytdlp_base_command() + [
             "--no-playlist",
             "--newline",
@@ -364,14 +370,18 @@ class YtDlpDownloader:
         if self._playlist_items:
             cmd += ["--playlist-items", str(self._playlist_items)]
         quality = self.task.quality or "best"
-        cmd += ["--format", build_format_selector(quality)]
-        if quality == "audio":
-            cmd += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"]
+        if self.audio_only:
+            # Birleştirme için yeniden kodlamadan ses akışının kendisini al.
+            cmd += ["--format", "ba[ext=m4a]/ba/b"]
         else:
-            cmd += ["--merge-output-format", "mp4/mkv"]
-            if bool(self.config.get("download_subtitles", False)):
-                langs = str(self.config.get("subtitle_langs", "tr,en") or "tr,en")
-                cmd += ["--write-subs", "--write-auto-subs", "--sub-langs", langs, "--embed-subs"]
+            cmd += ["--format", build_format_selector(quality)]
+            if quality == "audio":
+                cmd += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"]
+            else:
+                cmd += ["--merge-output-format", "mp4/mkv"]
+                if bool(self.config.get("download_subtitles", False)):
+                    langs = str(self.config.get("subtitle_langs", "tr,en") or "tr,en")
+                    cmd += ["--write-subs", "--write-auto-subs", "--sub-langs", langs, "--embed-subs"]
         limit = int(self.config.get("speed_limit_kbps", 0) or 0)
         if limit > 0:
             cmd += ["--limit-rate", f"{limit}K"]
@@ -443,16 +453,30 @@ class YtDlpDownloader:
             candidate = candidate.strip().strip('"')
             if candidate and os.path.isfile(candidate):
                 return candidate
-        # Son çare: çıktı klasöründeki en yeni video dosyası.
+        # Son çare: çıktı klasöründeki en yeni medya dosyası. Ses indirmesinde
+        # yalnızca ".audio." içeren dosyalara bak; böylece aynı görevin video
+        # dosyası yanlışlıkla ses sanılmaz.
         try:
             output_dir = Path(self.config.download_dir)
-            files = [
-                path
-                for path in output_dir.iterdir()
-                if path.is_file()
-                and path.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".opus"}
-                and path.stat().st_mtime >= self._start_time - 5
-            ]
+            if self.audio_only:
+                allowed = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", ".mp4"}
+                files = [
+                    path
+                    for path in output_dir.iterdir()
+                    if path.is_file()
+                    and ".audio." in path.name
+                    and path.suffix.lower() in allowed
+                    and path.stat().st_mtime >= self._start_time - 5
+                ]
+            else:
+                allowed = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".opus"}
+                files = [
+                    path
+                    for path in output_dir.iterdir()
+                    if path.is_file()
+                    and path.suffix.lower() in allowed
+                    and path.stat().st_mtime >= self._start_time - 5
+                ]
             files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
             if files:
                 return str(files[0])

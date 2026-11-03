@@ -406,7 +406,7 @@ class VideoAvciApp(tk.Tk):
         self.bind_all("<MouseWheel>", self._on_mousewheel)
         self.bind("<Control-n>", lambda _event: self._focus_url())
         self.bind("<Control-l>", lambda _event: self._focus_url())
-        self.bind("<Control-o>", lambda _event: self._open_download_folder())
+        self.bind("<Control-o>", lambda _event: self.open_download_folder())
         self.bind("<Control-q>", lambda _event: self.on_close())
         self.bind("<F5>", lambda _event: self.refresh_now())
 
@@ -429,7 +429,7 @@ class VideoAvciApp(tk.Tk):
         self.show_page("downloads")
         self.pages["downloads"].focus_url()
 
-    def _open_download_folder(self) -> None:
+    def open_download_folder(self) -> None:
         try:
             open_in_file_manager(self.cfg.download_dir)
         except Exception as exc:
@@ -601,6 +601,8 @@ class VideoAvciApp(tk.Tk):
             parts.append(human_speed(speed))
         if errors:
             parts.append(t("stats.errors", count=errors))
+        if snapshot.get("capture_paused"):
+            parts.append(t("stats.capture_paused"))
         self.stats_label.configure(text="●  " + "   ·   ".join(parts))
 
         active_tasks = sum(1 for task in tasks if task.get("status") not in {"completed", "canceled", "error"})
@@ -980,7 +982,22 @@ def show_already_running() -> None:
         print(t("app.already_running_stderr"), file=sys.stderr)
 
 
+def handle_cli_flags(argv: list[str]) -> int | None:
+    """--help / --version isteklerini uygulamayı açmadan yanıtlar."""
+    args = [str(arg).strip() for arg in argv]
+    if any(arg in {"-h", "--help"} for arg in args):
+        print(t("cli.help", version=VERSION))
+        return 0
+    if any(arg in {"-V", "--version"} for arg in args):
+        print(t("cli.version", version=VERSION))
+        return 0
+    return None
+
+
 def main() -> int:
+    cli_result = handle_cli_flags(sys.argv[1:])
+    if cli_result is not None:
+        return cli_result
     setup_logging()
     log.info("Abrek Download starting (version %s)", VERSION)
     url_argument = first_url_argument(sys.argv[1:])

@@ -102,6 +102,15 @@ class DownloadsPage(tk.Frame):
 
         paste = make_button(head, t("downloads.paste"), self.paste_from_clipboard, kind="link", size=9, bg=CARD, pady=2)
         paste.pack(side="right")
+        make_button(
+            head,
+            t("downloads.open_folder"),
+            self.app.open_download_folder,
+            kind="link",
+            size=9,
+            bg=CARD,
+            pady=2,
+        ).pack(side="right", padx=(0, 8))
 
         row = tk.Frame(inner, bg=CARD)
         row.pack(fill="x")
@@ -336,6 +345,16 @@ class DownloadsPage(tk.Frame):
     def focus_url(self) -> None:
         self.url_entry.focus_set()
         self.url_entry.select_range(0, "end")
+
+    def sync_default_quality(self) -> None:
+        """Ayarlardan değişen varsayılan kaliteyi açılır listeye yansıt."""
+        quality = str(self.app.cfg.get("default_quality", "best") or "best")
+        label = QUALITY_TO_LABEL.get(quality, QUALITY_TO_LABEL["best"])
+        if self.quality_combo.get() != label:
+            self.quality_combo.set(label)
+
+    def on_show(self) -> None:
+        self.sync_default_quality()
 
     def _on_search_change(self) -> None:
         self._search_query = self.search_entry.value().strip()

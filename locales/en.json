@@ -281,5 +281,16 @@
   "server.title": "Abrek Download Local Bridge",
   "server.heading": "▶ Abrek Download",
   "language.label": "Language",
-  "language.hint": "Interface language. Requires restart to apply."
+  "language.hint": "Interface language. Requires restart to apply.",
+  "cli.help": "Abrek Download {version}\n\nUsage:\n  abrek-download [URL]\n\nOptions:\n  -h, --help      Show this help\n  -V, --version   Show version\n\nIf a URL is given, it is queued when the app starts.\nIf the app is already running, the link is sent to the running queue.",
+  "cli.version": "Abrek Download {version}",
+  "stats.capture_paused": "capture paused",
+  "downloads.open_folder": "Open folder",
+  "captures.pause": "Pause capture",
+  "captures.resume": "Resume capture",
+  "captures.paused_toast": "Browser capture paused.",
+  "captures.resumed_toast": "Browser capture resumed.",
+  "captures.copy": "Copy link",
+  "captures.copied": "Link copied.",
+  "settings.restart_required": "Theme/language changes take effect after restarting the app."
 }

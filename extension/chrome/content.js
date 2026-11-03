@@ -14,7 +14,7 @@
   let lastHref = location.href;
   let pageInfoSent = false;
   let timer = null;
-  const isInstagram = /(^|\\.)instagram\\.com$/i.test(location.hostname);
+  const isInstagram = /(^|\.)instagram\.com$/i.test(location.hostname);
 
   function send(message) {
     try {
@@ -237,9 +237,9 @@
 
         const qOptions = [
           { label: '⚡ En İyi', q: 'best' },
+          { label: '1080p', q: '1080' },
           { label: '720p', q: '720' },
-          { label: '🎵 MP3', q: 'audio' },
-          { label: '🔀 Ses+Görüntü', q: 'merge' }
+          { label: '🎵 MP3', q: 'audio' }
         ];
 
         for (const opt of qOptions) {

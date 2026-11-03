@@ -499,6 +499,24 @@ class CaptureCard(tk.Frame):
             kind="ghost",
             size=9,
         ).pack(side="right", padx=(0, 8))
+        make_button(
+            buttons,
+            t("captures.copy"),
+            self.copy_url,
+            kind="ghost",
+            size=9,
+        ).pack(side="right", padx=(0, 8))
+
+    def copy_url(self) -> None:
+        url = str(self.data.get("url") or "")
+        if not url:
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(url)
+        except tk.TclError:
+            return
+        self.app.toast(t("captures.copied"), "success")
 
 
 class EmptyState(tk.Frame):

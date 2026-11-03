@@ -5,15 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
-from urllib.parse import urljoin
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urljoin
+
+import requests
 
 from .config import (
     API_HOST,
@@ -39,19 +42,33 @@ from .models import (
     FINISHED_STATUSES,
     make_capture,
 )
-import requests
-
 from .utils import (
     atomic_write_json,
     file_size,
     is_http_url,
     is_manifest_url,
-    is_media_url,
     is_youtube_url,
     load_json,
     normalize_url,
     now,
+    unique_path,
 )
+from .ytdlp import (
+    DownloadCanceled as YtCanceled,
+    DownloadError as YtError,
+    DownloadPaused as YtPaused,
+    YtDlpDownloader,
+    youtube_extra_args,
+    ytdlp_base_command,
+    ytdlp_version,
+)
+
+log = logging.getLogger("videoavci.manager")
+
+# ffprobe ile ilk parçayı incelerken belleğe en fazla bu kadar veri alınır.
+# HLS/DASH parçaları genellikle birkaç yüz KB'tır; bozuk/çok büyük parçalar
+# uygulamanın belleğini şişirmesin.
+PROBE_MAX_BYTES = 4 * 1024 * 1024
 
 
 def prune_orphan_parts(
@@ -87,16 +104,6 @@ def prune_orphan_parts(
         except OSError:
             continue
     return removed
-from .ytdlp import (
-    DownloadCanceled as YtCanceled,
-    DownloadError as YtError,
-    DownloadPaused as YtPaused,
-    YtDlpDownloader,
-    youtube_extra_args,
-    ytdlp_version,
-)
-
-log = logging.getLogger("videoavci.manager")
 
 
 class TaskPaused(Exception):
@@ -230,6 +237,7 @@ class DownloadManager:
                 "errors": errors,
                 "speed": speed,
                 "capture_count": len(captures),
+                "capture_paused": bool(self.config.get("capture_paused", False)),
             }
 
     def stats(self) -> dict[str, Any]:
@@ -380,8 +388,6 @@ class DownloadManager:
 
     @staticmethod
     def _resolution_from_url(url: str) -> str:
-        import re
-
         match = re.search(r"(2160|1440|1080|720|480|360|240)", url or "")
         if match:
             return f"{match.group(1)}p"
@@ -400,18 +406,35 @@ class DownloadManager:
                 if current in visited:
                     return None
                 visited.add(current)
-                response = s.get(current, headers=headers, timeout=(10, 20), allow_redirects=True)
-                if response.status_code != 200:
-                    return None
-                text = response.text
-                if not text.lstrip().startswith("#EXTM3U"):
-                    return response.content
+                with s.get(
+                    current,
+                    headers=headers,
+                    timeout=(10, 20),
+                    allow_redirects=True,
+                    stream=True,
+                ) as response:
+                    if response.status_code != 200:
+                        return None
+                    data = bytearray()
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        data.extend(chunk)
+                        if len(data) > PROBE_MAX_BYTES:
+                            # Beklenenden büyük parçayı belleğe almayalım;
+                            # analizden vazgeçip yt-dlp yoluna bırakıyoruz.
+                            return None
+                if not data.lstrip().startswith(b"#EXTM3U"):
+                    return bytes(data)
+                text = data.decode("utf-8", errors="replace")
                 segments = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
                 if not segments:
                     return None
                 current = urljoin(current, segments[0])
         except Exception:
             return None
+        finally:
+            s.close()
 
     def _schedule_probe(self, capture_id: str) -> None:
         with self.lock:
@@ -956,87 +979,91 @@ class DownloadManager:
 
     def _probe_av(self, url: str) -> tuple[bool, bool]:
         """URL'nin ses ve görüntü içerip içermediğini yt-dlp ile hızlıca sınar."""
-        try:
-            import json as _json
-            import subprocess as _sp
-        except Exception:
-            return False, False
-        # yt-dlp binary'sini öncelikle şu sırayla bul:
-        #   1) .venv içindeki yt-dlp
-        #   2) proje kökündeki bin/yt-dlp
-        #   3) PATH'teki yt-dlp
-        possible: list[pathlib.PurePath] = [
-            Path(__file__).resolve().parents[1] / ".venv" / "bin" / "yt-dlp",
-            Path.cwd() / "bin" / "yt-dlp",
+        cmd = ytdlp_base_command() + [
+            "--no-playlist",
+            "--no-warnings",
+            "--dump-single-json",
+            "--socket-timeout",
+            "20",
         ]
-        ytdlp_bin: str = "yt-dlp"  # fallback: sistem PATH'i
-        for p in possible:
-            if p.exists():
-                ytdlp_bin = str(p)
-                break
-        else:
-            import shutil as _shutil
-            sys_path_yt = _shutil.which("yt-dlp")
-            if sys_path_yt:
-                ytdlp_bin = sys_path_yt
-
+        cmd += youtube_extra_args(url)
+        cmd.append(url)
         try:
             result = subprocess.run(
-                [ytdlp_bin, "--dump-single-json", "--no-playlist", "--no-warnings", url],
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=45,
                 env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             )
         except Exception:
             return False, False
-        if result.returncode != 0 or not result.stdout:
+        if result.returncode != 0 or not result.stdout.strip():
             return False, False
-        try:
-            # yt-dlp çıktı genellikle tek satır JSON; satır sonu chars'a rağmen
-            # bazen birden fazla satır olabilir; son satırı al.
-            lines = result.stdout.strip().splitlines()
-            info = _json.loads(lines[-1])
-        except Exception:
+        info: dict[str, Any] | None = None
+        for line in reversed(result.stdout.strip().splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
             try:
-                info = _json.loads(result.stdout.strip())
-            except Exception:
-                return False, False
-        audio = str(info.get("audio_ext") or "").lower() not in ("", "none")
-        video = str(info.get("video_ext") or "").lower() not in ("", "none")
-        # audio_ext/video_ext yoksa formatlardan tahmin et.
-        if not audio or not video:
-            for fmt in (info.get("formats") or []):
-                if fmt.get("acodec") and fmt.get("acodec") != "none":
-                    audio = True
-                if fmt.get("vcodec") and fmt.get("vcodec") != "none":
-                    video = True
+                parsed = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                info = parsed
+                break
+        if info is None:
+            return False, False
+
+        formats = [fmt for fmt in (info.get("formats") or [info]) if isinstance(fmt, dict)]
+        if not formats:
+            formats = [info]
+        audio = False
+        video = False
+        for fmt in formats:
+            if str(fmt.get("acodec") or "").lower() not in ("", "none"):
+                audio = True
+            if str(fmt.get("vcodec") or "").lower() not in ("", "none"):
+                video = True
+            if str(fmt.get("audio_ext") or "").lower() not in ("", "none"):
+                audio = True
+            if str(fmt.get("video_ext") or "").lower() not in ("", "none"):
+                video = True
         return audio, video
 
     def _find_matching_audio(self, task: "DownloadTask") -> str:
-        """Aynı sayfa için ses‑only HLS yakalaması varsa URL'sini döner.
-        yt-dlp audio_ext/video_ext reliable ayrılamadığı için; önce her yakalamanın
-        sesli olup olmadığını _probe_av ile kontrol eder; sesli ilk bulunanu döndürür.
-        Eşleşme yoksa None döner (çoğu durumda calling code bunu yorumlar ve normal
-        indirme yoluna döner)."""
+        """Aynı sayfadaki ses-only HLS/DASH yakalamasını bulur.
+
+        Etiketi zaten ``audio`` olan adaylar önce denenir; her probe yt-dlp alt
+        süreci başlattığı için en fazla birkaç aday incelenir. Yalnızca gerçekten
+        ses içeren ve görüntü içermeyen bir akış döner; aksi halde boş dize.
+        """
         if not task.page_url:
             return ""
         with self.lock:
             candidates = [
-                c for c in self.captures
-                if c.page_url == task.page_url and c.kind in ("hls", "dash") and c.url != task.url
+                capture
+                for capture in self.captures
+                if capture.page_url == task.page_url
+                and capture.kind in {"hls", "dash"}
+                and capture.url != task.url
             ]
-        # Her yakalamayı ses/video olarak probe et; sesli ilkini döndür.
-        for cap in candidates:
-            audio, video = self._probe_av(cap.url)
+        candidates.sort(key=lambda capture: capture.media_kind != "audio")
+        for capture in candidates[:3]:
+            if capture.media_kind == "audio":
+                return capture.url
+            audio, video = self._probe_av(capture.url)
             if audio and not video:
-                return cap.url
-        # Eğer hiçbiri sesli değilse de bir eşleşme varsa, en yakın olanı (ilkini) döndür.
-        if candidates:
-            return candidates[0].url
+                return capture.url
         return ""
 
-    def _download_one(self, task: "DownloadTask", url: str, task_id: str) -> str:
+    def _download_one(
+        self,
+        task: "DownloadTask",
+        url: str,
+        task_id: str,
+        audio_only: bool = False,
+    ) -> str:
         orig_url = task.url
         task.url = url
         downloader = YtDlpDownloader(
@@ -1046,6 +1073,7 @@ class DownloadManager:
             self._status_callback(task_id),
             self._log_callback(task_id),
             self._metadata_callback(task_id),
+            audio_only=audio_only,
         )
         try:
             with self.lock:
@@ -1055,55 +1083,70 @@ class DownloadManager:
                 if task_id in self.cancel_requested:
                     downloader.cancel()
             return downloader.run()
-        except Exception:
-            # URL'yi orijinaline geri yükle; hata durumunda yukarı akışın
-            # _run_task exception handling'inide tetikleyebilir.
-            raise
         finally:
-            # finally her zaman çalışsın; exception oldu olmadı task.url'u sıfırla.
+            # Hata olsa da URL'yi orijinaline geri yükle.
             task.url = orig_url
 
     def _merge_av(self, video_path: str, audio_path: str) -> str:
-        """ffmpeg ile video+audi birleştir; metadata (şarkı/album/etc.) temizlenerek
-        site linklerinin dosyaya takılı önlenir. Başarısız olursa video‑only döndürür."""
-        import shutil as _shutil
-        from pathlib import Path as _Path
-        import subprocess as _sub
-        video_p = _Path(video_path)
-        audio_p = _Path(audio_path)
-        # İlk birleştirme (copy modu)
-        out = video_p.with_name(video_p.stem + "_merged.mp4")
-        try:
-            cmd = ["ffmpeg", "-y", "-i", str(video_p), "-i", str(audio_p), "-c", "copy", str(out)]
-            _sub.run(cmd, check=True, capture_output=True)
-        except _sub.CalledProcessError:
-            # copy modu başarısızsa (nadir); orijinal videoyu geri döndürüp hata ver.
+        """Video ve ses dosyalarını ffmpeg ile tek dosyada birleştirir.
+
+        Metadata temizlenir; böylece site bağlantıları/etiketleri dosyaya
+        yapışmaz. Önce MP4, olmazsa MKV kabı denenir. Birleştirme başarısız
+        olursa kaynak dosyalar silinmez ve hata yukarı iletilir.
+        """
+        video_p = Path(video_path)
+        audio_p = Path(audio_path)
+        if not video_p.is_file() or not audio_p.is_file():
+            raise FileNotFoundError("Birleştirilecek video veya ses dosyası bulunamadı.")
+
+        errors: list[str] = []
+        for suffix in (".mp4", ".mkv"):
+            target = unique_path(video_p.parent, f"{video_p.stem}_merged{suffix}")
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(video_p),
+                "-i",
+                str(audio_p),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-map_metadata",
+                "-1",
+                "-c",
+                "copy",
+                str(target),
+            ]
             try:
-                video_p.unlink(missing_ok=True)
-            except Exception:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                errors.append(str(exc))
+                continue
+            if result.returncode == 0 and target.is_file() and target.stat().st_size > 0:
+                for source in (video_p, audio_p):
+                    try:
+                        source.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                return str(target)
+            errors.append((result.stderr or "").strip()[-500:])
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
                 pass
-            raise RuntimeError("FFmpeg merge failed; returning video‑only file.")
-        # ---------- Metadata temizleme ----------
-        # Dosya içindeki tüm ID3/etiket/bilgi temizlenir; site linkleri,
-        # affiliate parametreler veya eski etiketler dosyaya takılıp kalmaz.
-        out_clean = video_p.with_name(video_p.stem + ".mp4")
-        cmd2 = ["ffmpeg", "-y", "-i", str(out), "-map_metadata", "-1", "-c", "copy", str(out_clean)]
-        _sub.run(cmd2, check=True, capture_output=True)
-        # Orijinal geçici birleştirme dosyasını sil
-        try:
-            out.unlink(missing_ok=True)
-        except Exception:
-            pass
-        # Orijinal video ve ses dosyalarını sil
-        try:
-            video_p.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            audio_p.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return str(out_clean)
+
+        detail = next((error for error in reversed(errors) if error), "bilinmeyen hata")
+        raise RuntimeError(f"FFmpeg birleştirme başarısız: {detail}")
 
     def _run_task(self, task_id: str) -> None:
         downloader = None
@@ -1132,19 +1175,28 @@ class DownloadManager:
                     if audio_url:
                         task.audio_url = audio_url
                         self._save_locked()
-                        log.info("Eşleşen akış bulunamış; tamamlanacak dosya birleştirilecek.")
+                        log.info("Eşleşen ses akışı bulundu: %s", audio_url[:160])
                 except Exception:
                     pass
 
             if mode != "direct" and task.audio_url:
                 # Birleştirilmiş indirme: önce video, sonra ses, sonra ffmpeg merge.
+                video_path = self._download_one(task, task.url, task_id)
+                audio_path = self._download_one(task, task.audio_url, task_id, audio_only=True)
                 try:
-                    video_path = self._download_one(task, task.url, task_id)
-                    audio_path = self._download_one(task, task.audio_url, task_id)
                     path = self._merge_av(video_path, audio_path)
                     task.audio_url = ""  # tekrar birleştirme yapma
                 except Exception as exc:
-                    raise
+                    if not os.path.isfile(video_path):
+                        raise
+                    # Birleştirme başarısız olsa da indirilen videoyu kaybetme.
+                    log.warning(
+                        "Ses/video birleştirilemedi, video tek başına kullanılacak: %s",
+                        exc,
+                    )
+                    self._log_callback(task_id)(f"Birleştirme hatası: {exc}")
+                    path = video_path
+                    task.audio_url = ""
             else:
                 if mode == "direct":
                     downloader = DirectDownloader(

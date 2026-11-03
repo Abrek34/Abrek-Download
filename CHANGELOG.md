@@ -1,5 +1,52 @@
 # Sürüm Notları
 
+## 1.9.0 — 2026-11-03
+
+### Kritik düzeltmeler
+
+- **`_probe_av` çalışmıyordu:** `pathlib` içe aktarılmadan `pathlib.PurePath`
+  kullanıldığı için her çağrı sessizce `(False, False)` dönüyordu; ses-only HLS
+  akışları hiç bulunamıyordu. Artık `yt-dlp` modülü ve YouTube ek argümanlarıyla
+  çalışır, çıktıyı güvenli biçimde ayrıştırır.
+- **Ses akışı yanlış indiriliyordu:** `_find_matching_audio` rastgele bir aday
+  döndürebiliyor, `_download_one` ses URL'sini normal kalite seçicisiyle
+  indiriyordu. Artık yalnızca gerçekten ses-only akış seçilir ve `audio_only`
+  modunda yeniden kodlama yapılmadan indirilir.
+- **Başarısız birleştirme videoyu siliyordu:** ffmpeg hatasında kaynak video
+  siliniyordu. Artık kaynaklar korunur, MP4 başarısızsa MKV denenir ve
+  birleştirme yine başarısız olursa video tek başına teslim edilir.
+- **Bellek koruması:** ffprobe için indirilen ilk HLS parçası 4 MB ile
+  sınırlandırıldı; büyük/bozuk parçalar belleği şişiremez.
+
+### Tarayıcı eklentisi
+
+- Sayfa/video yakalamaları tanımsız `postJson` ve `pushPending` çağrıları
+  yüzünden hiç gönderilmiyordu; `postCapture` ve `addPending` ile düzeltildi.
+- `handleDetection` içindeki tanımsız `contentRange` değişkeni giderildi.
+- Instagram filtre regex'i düzeltildi; artık `instagram.com` doğru eşleşiyor.
+- Geçersiz `merge` kalite değeri kaldırıldı; 2160p/1440p seçenekleri eklendi.
+- Eklenti sürümü 1.2.0'a yükseltildi (Chrome ve Firefox).
+
+### Yerel köprü ve güvenlik
+
+- `Origin: null` istekleri artık reddediliyor; sandbox iframe/file kaynaklı
+  isteklere karşı koruma sağlandı.
+- Güvenlik başlıkları eklendi (`X-Frame-Options`, `Referrer-Policy`, CSP).
+- `allow_reuse_address` sunucu kurulmadan önce etkinleştirildi.
+- Görev denetimi için `POST /api/tasks/<id>/pause|resume|cancel|retry` uçları
+  eklendi.
+
+### Arayüz ve kullanım
+
+- Yakalananlar sayfasına yakalamayı duraklat/sürdür düğmesi ve bağlantı kopyalama
+  eklendi.
+- İndirilenler sayfasına "Klasörü aç" düğmesi eklendi.
+- Tema/dil değişikliğinde yeniden başlatma uyarısı gösteriliyor.
+- Ayarlardaki varsayılan kalite, indirme sayfasındaki seçimle eşitleniyor.
+- `--help` ve `--version` komut satırı seçenekleri eklendi.
+- Üst düzeydeki kullanılmayan/eski `config.py` ve `manager.py` kopyaları
+  kaldırıldı; sürüm 1.9.0'a yükseltildi.
+
 ## 1.8.13 — 2026-11-02
 
 ### Yeni özellikler

@@ -446,7 +446,7 @@ el('clear').addEventListener('click', clearList);
 el('quality').addEventListener('change', async (event) => {
   state.settings.quality = event.target.value;
   await saveSettings();
-  const labels = { best: 'En iyi kalite', '1080': '1080p', '720': '720p', '480': '480p', audio: 'Ses (MP3)' };
+  const labels = { best: 'En iyi kalite', '2160': '2160p', '1440': '1440p', '1080': '1080p', '720': '720p', '480': '480p', audio: 'Ses (MP3)' };
   toast(`Kalite: ${labels[state.settings.quality] || state.settings.quality}`);
 });
 

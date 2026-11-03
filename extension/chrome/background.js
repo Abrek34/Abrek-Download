@@ -191,11 +191,11 @@ async function checkAndAddVideoPage(tabId, pageUrl, pageTitle, hasVideo = false)
       const settings = await readSettings();
       if (settings.autoSend !== false) {
         try {
-          await postJson('/api/captures', item);
+          await postCapture(item, tabId);
           item.sent = true;
           await writeTab(tabId, record);
         } catch {
-          await pushPending(item);
+          await addPending(item, tabId);
         }
       }
     } else if (cleanTitle && (!existing.title || existing.title === 'YouTube Video')) {
@@ -354,7 +354,7 @@ async function retryPending() {
   await writePending(remaining);
 }
 
-async function handleDetection(tabId, rawUrl, contentType, size, source, initiator, requestType) {
+async function handleDetection(tabId, rawUrl, contentType, size, source, initiator, requestType, contentRange = '') {
   if (!Number.isInteger(tabId) || tabId < 0) return;
   if (await isCapturePaused()) return;
   const url = normalizeUrl(rawUrl);
@@ -520,6 +520,7 @@ ext.webRequest.onHeadersReceived.addListener(
       'headers',
       details.initiator || '',
       details.type,
+      contentRange,
     ).catch(() => {});
   },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },

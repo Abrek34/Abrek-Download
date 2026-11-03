@@ -4,7 +4,7 @@ Linux için, tarayıcı eklentisiyle çalışan bir video indirici. İnternette 
 oynatılan videoları otomatik yakalar; YouTube gibi sitelerde `yt-dlp`, doğrudan
 medya dosyalarında çok parçalı indirme motoru kullanır.
 
-Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.13**.
+Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.9.0**.
 
 ## Özellikler
 
@@ -20,6 +20,8 @@ Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.13*
   yerden devam eder.
 - **Kalite seçimi:** en iyi, 4K, 2K, 1080p, 720p, 480p veya sadece ses.
 - **Toplu işlem:** yakalanan videoların tümünü tek tıkla kuyruğa ekleyin.
+- **Yakalama denetimi:** tarayıcı yakalamasını uygulamadan duraklatın/sürdürün,
+  yakalanan bağlantıyı kopyalayın ve indirme klasörünü tek tıkla açın.
 - **Ayrıntılar:** hata günlüğünü görüntüleyin, bağlantıyı kopyalayın.
 - **Koyu/açık tema ve Türkçe/İngilizce arayüz**, masaüstü bildirimleri ve
   uygulama menüsü kısayolu.
@@ -28,7 +30,7 @@ Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.8.13*
 - **Dayanıklı indirme:** sunucu ETag/Last-Modified değişimini algılayarak eski
   yarım parçaları birleştirmez; yetim parça klasörlerini temizler.
 - **Güvenli yerel köprü:** yalnızca `127.0.0.1`/`localhost` Host başlığını kabul
-  eder ve kontrol paneli HTML'ini kaçırır.
+  eder, `Origin: null` isteklerini reddeder ve kontrol paneli HTML'ini kaçırır.
 
 ## Hızlı başlatma
 
@@ -45,6 +47,16 @@ Komut satırından doğrudan indirme başlatabilirsiniz:
 
 Uygulama kapalıysa açılır ve bağlantı kuyruğa eklenir; açıksa bağlantı çalışan
 pencereye gönderilir. Kalite olarak ayarlardaki varsayılan değer kullanılır.
+
+Kullanım ve sürüm bilgisi:
+
+```bash
+./baslat.sh --help
+./baslat.sh --version
+```
+
+Yerel köprü üzerinden çalışan görevler `POST /api/tasks/<id>/pause`,
+`resume`, `cancel` ve `retry` uçlarıyla da denetlenebilir.
 
 İlk çalıştırmada `.venv` sanal ortamı oluşturulur ve `yt-dlp` kurulur.
 Video birleştirme ve ses çıkarma için `ffmpeg`/`ffprobe`, YouTube'un JS

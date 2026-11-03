@@ -60,6 +60,16 @@ class CapturesPage(tk.Frame):
         )
         self.download_all_button.pack(side="right", padx=(0, 8))
 
+        self.capture_pause_button = make_button(
+            bar,
+            t("captures.pause"),
+            self.toggle_capture_pause,
+            kind="ghost",
+            size=8,
+            bg=BG,
+        )
+        self.capture_pause_button.pack(side="right", padx=(0, 8))
+
         self.scroll = ScrollFrame(self)
         self.scroll.pack(fill="both", expand=True, pady=(14, 0))
 
@@ -77,6 +87,16 @@ class CapturesPage(tk.Frame):
         self.list_frame.pack(fill="x")
 
     # ------------------------------------------------------------------ eylemler
+    def toggle_capture_pause(self) -> None:
+        paused = not bool(self.app.cfg.get("capture_paused", False))
+        self.app.cfg.set("capture_paused", paused)
+        self.app.cfg.save()
+        self.app.toast(
+            t("captures.paused_toast" if paused else "captures.resumed_toast"),
+            "info",
+        )
+        self.app.refresh_now()
+
     def clear_all(self) -> None:
         if not self._captures:
             return
@@ -105,6 +125,10 @@ class CapturesPage(tk.Frame):
     def update_snapshot(self, snapshot: dict) -> None:
         captures = list(snapshot.get("captures") or [])
         self._captures = captures
+        paused = bool(snapshot.get("capture_paused"))
+        self.capture_pause_button.configure(
+            text=t("captures.resume") if paused else t("captures.pause"),
+        )
         self.count_label.configure(
             text=t("captures.count", count=len(captures)) if captures else t("captures.none")
         )

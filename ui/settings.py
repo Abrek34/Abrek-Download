@@ -445,6 +445,9 @@ class SettingsPage(tk.Frame):
             self.app.toast(t("settings.err.folder_no_write"), "error")
             return
 
+        old_theme = str(self.app.cfg.get("theme", "dark") or "dark")
+        old_language = str(self.app.cfg.get("language") or current_language())
+
         try:
             max_concurrent = self._parse_int(self.concurrent_combo.get(), t("settings.concurrent"), 1, 5)
             connections = self._parse_int(self.connections_combo.get(), t("settings.connections"), 1, 8)
@@ -490,7 +493,11 @@ class SettingsPage(tk.Frame):
         )
         self.save_status.configure(text=t("settings.saved"), fg=GREEN)
         self.after(3200, lambda: self.save_status.configure(text=""))
-        self.app.toast(t("settings.saved_toast"), "success")
+        self.app.pages["downloads"].sync_default_quality()
+        if theme_val != old_theme or selected_lang_code != old_language:
+            self.app.toast(t("settings.restart_required"), "warning")
+        else:
+            self.app.toast(t("settings.saved_toast"), "success")
 
     def _parse_int(self, value: str, name: str, low: int, high: int) -> int:
         try:
@@ -524,3 +531,4 @@ class SettingsPage(tk.Frame):
 
     def on_show(self) -> None:
         self.refresh_ytdlp_version()
+        self.capture_paused_var.set(bool(self.app.cfg.get("capture_paused", False)))
