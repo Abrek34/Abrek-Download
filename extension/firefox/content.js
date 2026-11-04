@@ -233,19 +233,24 @@
 
         const actions = document.createElement('div');
         actions.style.display = 'flex';
+        actions.style.flexWrap = 'wrap';
         actions.style.gap = '4px';
 
         const qOptions = [
           { label: '⚡ En İyi', q: 'best' },
+          { label: '2160p', q: '2160' },
+          { label: '1440p', q: '1440' },
           { label: '1080p', q: '1080' },
           { label: '720p', q: '720' },
+          { label: '480p', q: '480' },
           { label: '🎵 MP3', q: 'audio' }
         ];
 
         for (const opt of qOptions) {
           const btn = document.createElement('button');
           btn.textContent = opt.label;
-          btn.style.flex = '1';
+          btn.style.flex = '1 1 28%';
+          btn.style.minWidth = '54px';
           btn.style.padding = '4px 6px';
           btn.style.textAlign = 'center';
           btn.style.fontSize = '10px';

@@ -12,8 +12,13 @@ from unittest import mock
 
 os.environ["ABREK_LANG"] = "tr"
 
-from core.manager import DownloadManager, prune_orphan_parts
-from core.models import DownloadTask
+from core.manager import (
+    DownloadManager,
+    auto_retry_delay,
+    capture_needs_probe,
+    prune_orphan_parts,
+)
+from core.models import Capture, DownloadTask
 
 
 class PruneOrphanPartsTests(unittest.TestCase):
@@ -335,3 +340,130 @@ class FetchFirstSegmentTests(unittest.TestCase):
             self.assertIsNone(
                 manager._fetch_first_segment("https://cdn.test/segment.ts")
             )
+
+
+class CaptureProbeTests(unittest.TestCase):
+    def test_new_capture_needs_probe(self):
+        self.assertTrue(capture_needs_probe(Capture(media_kind="")))
+
+    def test_audio_and_av_captures_are_not_probed(self):
+        for kind in ("audio", "av"):
+            with self.subTest(kind=kind):
+                self.assertFalse(capture_needs_probe(Capture(media_kind=kind)))
+
+    def test_recent_probe_is_skipped(self):
+        capture = Capture(media_kind="manifest", media_info="1080p", probed_at=1000.0)
+        self.assertFalse(capture_needs_probe(capture, now_value=1000.0 + 3600))
+
+    def test_stale_probe_is_refreshed(self):
+        capture = Capture(media_kind="manifest", media_info="1080p", probed_at=1000.0)
+        self.assertTrue(capture_needs_probe(capture, now_value=1000.0 + 90000))
+
+
+class AutoRetryTests(unittest.TestCase):
+    @staticmethod
+    def make_manager(**config):
+        values = {"auto_retry": True, "auto_retry_limit": 2, **config}
+        return SimpleNamespace(config=values, _finish_action_done=True)
+
+    def test_delay_uses_exponential_backoff(self):
+        self.assertEqual(auto_retry_delay(1), 15)
+        self.assertEqual(auto_retry_delay(2), 30)
+        self.assertEqual(auto_retry_delay(3), 60)
+        self.assertEqual(auto_retry_delay(6), 120)
+
+    def test_transient_error_is_requeued(self):
+        manager = self.make_manager()
+        task = DownloadTask(url="https://x.test/a.mp4", status="downloading")
+        retried = DownloadManager._maybe_auto_retry_locked(
+            manager, task, Exception("HTTP 503 Service Unavailable")
+        )
+        self.assertTrue(retried)
+        self.assertEqual(task.status, "queued")
+        self.assertEqual(task.retry_count, 1)
+        self.assertGreater(task.available_at, time.time())
+        self.assertFalse(manager._finish_action_done)
+
+    def test_permanent_error_is_not_retried(self):
+        manager = self.make_manager()
+        task = DownloadTask(url="https://x.test/a.mp4", status="downloading")
+        self.assertFalse(
+            DownloadManager._maybe_auto_retry_locked(
+                manager, task, Exception("HTTP 404 Not Found")
+            )
+        )
+        self.assertEqual(task.status, "downloading")
+        self.assertEqual(task.retry_count, 0)
+
+    def test_limit_and_disable_are_respected(self):
+        task = DownloadTask(
+            url="https://x.test/a.mp4",
+            status="downloading",
+            retry_count=2,
+        )
+        self.assertFalse(
+            DownloadManager._maybe_auto_retry_locked(
+                self.make_manager(), task, Exception("timed out")
+            )
+        )
+        task.retry_count = 0
+        self.assertFalse(
+            DownloadManager._maybe_auto_retry_locked(
+                self.make_manager(auto_retry=False), task, Exception("timed out")
+            )
+        )
+
+
+class BatchAddTests(unittest.TestCase):
+    def make_manager(self):
+        manager = DownloadManager.__new__(DownloadManager)
+        manager.lock = __import__("threading").RLock()
+        manager.tasks = {}
+        manager.config = {"default_quality": "best"}
+        manager._finish_action_done = True
+        manager._save_locked = mock.Mock()
+        manager._wake = mock.Mock()
+        return manager
+
+    def test_add_urls_counts_added_duplicate_and_invalid(self):
+        manager = self.make_manager()
+        added, duplicate, invalid = DownloadManager.add_urls(
+            manager,
+            [
+                "https://x.test/a.mp4",
+                "https://x.test/a.mp4",
+                "ftp://x.test/b.mp4",
+                "x.test/c.mp4",
+            ],
+        )
+        self.assertEqual((added, duplicate, invalid), (2, 1, 1))
+        self.assertEqual(len(manager.tasks), 2)
+        manager._save_locked.assert_called_once()
+        manager._wake.set.assert_called_once()
+
+
+class ClearQueueTests(unittest.TestCase):
+    def test_active_workers_keep_concurrency_and_cancel_state(self):
+        active = DownloadTask(url="https://x.test/a.mp4", status="downloading")
+        queued = DownloadTask(url="https://x.test/b.mp4", status="queued")
+        controller = mock.Mock()
+        manager = SimpleNamespace(
+            lock=__import__("threading").RLock(),
+            tasks={active.id: active, queued.id: queued},
+            active_ids={active.id},
+            controllers={active.id: controller},
+            pause_requested={active.id},
+            cancel_requested=set(),
+            _finish_action_done=True,
+            _cleanup_parts=mock.Mock(),
+            _save_locked=mock.Mock(),
+            _wake=mock.Mock(),
+        )
+        removed = DownloadManager.clear_queue(manager)
+        self.assertEqual(removed, 2)
+        self.assertEqual(manager.tasks, {})
+        self.assertEqual(manager.active_ids, {active.id})
+        self.assertIn(active.id, manager.controllers)
+        self.assertIn(active.id, manager.cancel_requested)
+        controller.cancel.assert_called_once()
+        manager._cleanup_parts.assert_called_once_with(queued.id)

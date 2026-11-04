@@ -458,6 +458,13 @@ class CaptureCard(tk.Frame):
         meta_row = tk.Frame(texts, bg=CARD)
         meta_row.pack(fill="x", pady=(3, 0))
         make_badge(meta_row, data.get("media_label") or data.get("kind_label") or "MEDYA", color, tint).pack(side="left", padx=(0, 8))
+        if data.get("drm"):
+            make_badge(
+                meta_row,
+                t("capture.media.drm"),
+                theme.RED,
+                theme.RED_SOFT,
+            ).pack(side="left", padx=(0, 8))
         meta_parts = [data.get("host") or ""]
         if data.get("size"):
             meta_parts.append(human_size(data.get("size")))
@@ -484,14 +491,27 @@ class CaptureCard(tk.Frame):
 
         buttons = tk.Frame(body, bg=CARD)
         buttons.pack(side="right", padx=(12, 0), anchor="n")
-        make_button(
+        download_button = make_button(
             buttons,
             t("captures.download"),
             lambda: self.app.download_capture(str(data.get("id") or "")),
             kind="primary",
             size=9,
             padx=16,
-        ).pack(side="right")
+        )
+        if data.get("drm"):
+            download_button.configure(
+                state="disabled",
+                text=t("captures.drm_button"),
+                bg=CARD_ALT,
+                fg=MUTED,
+                activebackground=CARD_ALT,
+                activeforeground=MUTED,
+                cursor="arrow",
+            )
+            download_button.unbind("<Enter>")
+            download_button.unbind("<Leave>")
+        download_button.pack(side="right")
         make_button(
             buttons,
             t("captures.remove"),

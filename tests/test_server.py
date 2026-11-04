@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 os.environ["ABREK_LANG"] = "tr"
 
-from core.server import host_allowed, origin_allowed
+from core.models import DownloadTask
+from core.server import ApiHandler, host_allowed, origin_allowed
 
 
 class HostAllowedTests(unittest.TestCase):
@@ -59,6 +62,71 @@ class OriginAllowedTests(unittest.TestCase):
         ):
             with self.subTest(value=value):
                 self.assertFalse(origin_allowed(value))
+
+
+class ApiRouteTests(unittest.TestCase):
+    def make_handler(self, path: str, manager) -> ApiHandler:
+        handler = ApiHandler.__new__(ApiHandler)
+        handler.path = path
+        handler.headers = {}
+        handler.manager = manager
+        handler._check_host = lambda: True
+        handler._check_origin = lambda: True
+        handler._send_json = mock.Mock()
+        handler._send_html = mock.Mock()
+        return handler
+
+    def test_get_stats(self):
+        manager = SimpleNamespace(
+            stats=mock.Mock(return_value={"active": 1, "queued": 2, "retrying": 1})
+        )
+        handler = self.make_handler("/api/stats", manager)
+        handler.do_GET()
+        handler._send_json.assert_called_once_with(
+            200, {"ok": True, "active": 1, "queued": 2, "retrying": 1}
+        )
+
+    def test_get_task_detail(self):
+        task = DownloadTask(url="https://x.test/a.mp4", retry_count=1)
+        manager = SimpleNamespace(get_task=mock.Mock(return_value=task))
+        handler = self.make_handler(f"/api/tasks/{task.id}", manager)
+        handler.do_GET()
+        status, payload = handler._send_json.call_args.args
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["task"]["retry_count"], 1)
+
+    def test_get_missing_task_returns_404(self):
+        manager = SimpleNamespace(get_task=mock.Mock(return_value=None))
+        handler = self.make_handler("/api/tasks/yok", manager)
+        handler.do_GET()
+        self.assertEqual(handler._send_json.call_args.args[0], 404)
+
+    def test_capture_download_endpoint(self):
+        task = DownloadTask(url="https://x.test/a.mp4")
+        manager = SimpleNamespace(
+            download_capture=mock.Mock(return_value=(task, False))
+        )
+        handler = self.make_handler("/api/captures/c1/download", manager)
+        handler._read_json = lambda: {}
+        handler.do_POST()
+        manager.download_capture.assert_called_once_with("c1")
+        status, payload = handler._send_json.call_args.args
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["duplicate"])
+
+    def test_private_network_preflight_header(self):
+        handler = ApiHandler.__new__(ApiHandler)
+        handler.headers = {
+            "Origin": "chrome-extension://abcdefghijklmnop",
+            "Access-Control-Request-Private-Network": "true",
+        }
+        headers = handler._cors_headers()
+        self.assertEqual(headers["Access-Control-Allow-Private-Network"], "true")
+        self.assertEqual(
+            headers["Access-Control-Allow-Origin"],
+            "chrome-extension://abcdefghijklmnop",
+        )
 
 
 if __name__ == "__main__":

@@ -149,6 +149,7 @@ class CapturesPage(tk.Frame):
                 str(item.get("kind")),
                 str(item.get("media_kind")),
                 str(item.get("media_info")),
+                bool(item.get("drm")),
                 int(item.get("size") or 0),
             )
             for item in captures

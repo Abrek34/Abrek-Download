@@ -1,5 +1,89 @@
 # Sürüm Notları
 
+## 1.11.0 — 2026-11-04
+
+### Hata sınıflandırması
+
+- **Tipli hatalar:** `core/errors.py` ile `DownloadError`, `TransientDownloadError`,
+  `PermanentDownloadError`, `DrmProtectedError`, `DiskSpaceError` vb. eklendi.
+  Otomatik yeniden deneme artık hata mesajındaki kelimeler yerine `ErrorKind`
+  alanına göre karar verir; yalnızca yt-dlp alt süreci çıktısı deterministik
+  metin eşlemesiyle sınıflandırılır. `retry_after` değeri yeniden deneme
+  gecikmesine yansıtılır (üst sınır 300 sn).
+
+### Yerleşik medya analizi
+
+- **Harici araçlar yalnızca yedek:** `core/probe.py` HLS, DASH, ISO BMFF (MP4),
+  MPEG-TS ve WebM/Matroska için saf Python ayrıştırıcıları içerir. ffprobe ve
+  yt-dlp yalnızca yerel analiz eksik kaldığında kullanılır. HLS `SAMPLE-AES` ve
+  DASH `ContentProtection`, MP4 `pssh` ve WebM `ContentEncryption` algılanır.
+
+### Tarayıcı eklentisi
+
+- **Sözleşme testleri:** Chrome/Firefox manifestleri, ikonlar, kalite seçenekleri,
+  API uç noktaları ve ortak varlıklar için `tests/test_extension.py` eklendi.
+
+### DRM
+
+- **Algılama ve engelleme:** Yakalamalara `drm` alanı eklendi; DRM korumalı
+  içerikler için indirme düğmesi devre dışı bırakılır ve açık bir mesaj gösterilir.
+  DRM korumasını aşmak yasal ve teknik olarak mümkün değildir; bu nedenle
+  bypass uygulanmaz.
+
+### Diğer
+
+- Sürüm `1.11.0` olarak güncellendi.
+
+## 1.10.0 — 2026-11-04
+
+### Dayanıklılık ve indirme motoru
+
+- **Otomatik yeniden deneme:** Ağ, zaman aşımı, HTTP 408/425/429 ve 5xx gibi
+  geçici hatalarda görev üstel geri çekilmeyle (15/30/60/120 sn) yeniden
+  kuyruğa alınır. Varsayılan olarak 2 denemedir; Ayarlar'dan 0-5 arasında
+  değiştirilebilir. DRM, 404, 403, özel video ve desteklenmeyen URL gibi kalıcı
+  hatalar otomatik denenmez.
+- **Doğrudan indiricide akıllı yeniden deneme:** Parça ve tek akış indirmeleri
+  `Retry-After` başlığına ve üstel geri çekilmeye uyar; kalıcı HTTP hatalarında
+  boşuna beklenmez. Duraklat/iptal sinyalleri bekleme sırasında da dikkate
+  alınır.
+- **Disk alanı güvenliği:** İndirme başlamadan ve parçalar birleştirilmeden önce
+  boş alan denetlenir. Yer yetersizse yarım dosya bırakmak yerine anlaşılır bir
+  hata verilir.
+- **yt-dlp son dosya çözümlemesi:** `after_move` çıktısı ve video kimliği
+  kullanılır; eşzamanlı indirmelerde başka görevin dosyası seçilmez. Parça
+  eşzamanlılığı ayarlardaki bağlantı sayısına bağlandı.
+- **Kuyruk temizleme yarışı:** Tümünü temizle işlemi aktif görevlerin
+  sayaçlarını erken sıfırlamaz; çalışan iş parçacıkları kendi temizliğini
+  yapana kadar eşzamanlılık sınırı korunur.
+
+### Yakalama analizi
+
+- Her yakalama için ayrı iş parçacığı açmak yerine 2 işçili sınırlı kuyruk
+  kullanılır. Analiz zaman damgası kalıcıdır (`probed_at`) ve 24 saat içinde
+  aynı yakalama yeniden incelenmez; başarısız analizler de tekrar tekrar
+  denenmez.
+
+### Arayüz ve API
+
+- **Toplu bağlantı ekleme:** İndirilenler sayfasına çok satırlı bağlantı
+  penceresi eklendi; eklenen, zaten kuyrukta olan ve geçersiz adresler
+  özetlenir. Tek kayıtla toplu kuyruk ekleme yapılır.
+- Ayarlar sayfasına otomatik yeniden deneme ve deneme sayısı denetimleri
+  eklendi.
+- Yerel API'ye `GET /api/tasks/<id>`, `GET /api/stats` ve
+  `POST /api/captures/<id>/download` uçları; Chrome özel ağ erişimi için
+  `Access-Control-Allow-Private-Network` desteği eklendi.
+- Tarayıcı eklentisi kalite menüsüne 2160p/1440p/480p seçenekleri eklendi;
+  eklenti sürümü 1.2.1 oldu.
+
+### Testler
+
+- `parse_retry_after`, `free_space`, `is_transient_error`,
+  `capture_needs_probe`, otomatik yeniden deneme, toplu ekleme, kuyruk
+  temizleme, yeni API uçları ve yt-dlp son dosya seçimi için birim testleri
+  eklendi. Toplam test sayısı 91'e çıktı.
+
 ## 1.9.0 — 2026-11-03
 
 ### Kritik düzeltmeler

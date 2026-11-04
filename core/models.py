@@ -98,6 +98,8 @@ class DownloadTask:
     analyzed: bool = False
     log_tail: str = ""
     detail: str = ""
+    retry_count: int = 0
+    available_at: float = 0.0
 
     def display_title(self) -> str:
         if self.title:
@@ -151,7 +153,9 @@ class Capture:
     media_info: str = ""  # çözünürlük/bitrate gibi ek bilgi
     referer: str = ""
     tab_id: int = -1
+    drm: bool = False
     created_at: float = field(default_factory=now)
+    probed_at: float = 0.0
 
     def display_title(self) -> str:
         if self.title:
@@ -233,6 +237,7 @@ def make_capture(payload: dict[str, Any]) -> Capture:
         media_kind="",
         referer=str(payload.get("referer") or "").strip(),
         tab_id=int(payload.get("tab_id") or payload.get("tabId") or -1),
+        drm=bool(payload.get("drm") or False),
     )
     if capture.kind not in {"direct", "hls", "dash", "page"}:
         capture.kind = "direct"

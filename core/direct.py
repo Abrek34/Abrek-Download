@@ -14,13 +14,27 @@ from typing import Callable
 import requests
 
 from .config import PARTS_DIR
+from .errors import (
+    AuthenticationError,
+    DiskSpaceError,
+    DownloadError,
+    NotDirectError,
+    PermanentDownloadError,
+    ResourceNotFoundError,
+    TransientDownloadError,
+    error_from_http,
+    error_from_os,
+    error_from_request,
+)
 from .i18n import t
 from .utils import (
     USER_AGENT,
     filename_from_url,
+    free_space,
     human_size,
-    is_media_url,
+    is_transient_error,
     load_json,
+    parse_retry_after,
     sanitize_filename,
     unique_path,
 )
@@ -30,6 +44,11 @@ StatusCallback = Callable[[str, str], None]
 TitleCallback = Callable[[str, str, int], None]
 LogCallback = Callable[[str], None]
 
+# Sunucu tarafındaki geçici hatalar; otomatik geri çekilme ile yeniden denenir.
+RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+MAX_PART_RETRIES = 4
+SPACE_MARGIN = 64 * 1024 * 1024
+
 
 class DownloadPaused(Exception):
     pass
@@ -37,14 +56,6 @@ class DownloadPaused(Exception):
 
 class DownloadCanceled(Exception):
     pass
-
-
-class DownloadError(Exception):
-    pass
-
-
-class NotDirectError(DownloadError):
-    """URL bir web sayfası; yt-dlp ile denenmeli."""
 
 
 def plan_segments(total: int, count: int) -> list[dict]:
@@ -129,7 +140,7 @@ class DirectDownloader:
         self._speed_bytes = 0
         self._speed_time = time.monotonic()
         self._last_emit = 0.0
-        self._error: str | None = None
+        self._error: DownloadError | None = None
         self._error_lock = threading.Lock()
         self.limiter = RateLimiter(int(config.get("speed_limit_kbps", 0) or 0))
 
@@ -164,119 +175,238 @@ class DirectDownloader:
             headers["Referer"] = self.task.referer
         return headers
 
+    def _request_probe(self, headers: dict[str, str]):
+        """HEAD ile hızlıca dener, gerekiyorsa Range destekli GET'e düşer."""
+        try:
+            head = self.session.head(
+                self.task.url,
+                headers=headers,
+                allow_redirects=True,
+                timeout=(20, 45),
+            )
+        except requests.RequestException:
+            head = None
+
+        if head is not None:
+            status = head.status_code
+            content_type = (head.headers.get("Content-Type") or "").lower()
+            content_length = head.headers.get("Content-Length")
+            accept_ranges = (head.headers.get("Accept-Ranges") or "").lower()
+            try:
+                numeric_length = int(content_length or 0)
+            except (TypeError, ValueError):
+                numeric_length = 0
+            # HEAD bazen boş/yanıltıcı olur. Boyut yoksa, HTML dönerse veya
+            # Range desteği doğrulanamadıysa küçük bir GET ile kontrol et.
+            needs_get = (
+                status >= 400
+                or not content_length
+                or "text/html" in content_type
+                or status in (403, 405, 501)
+                or (
+                    status == 200
+                    and "bytes" not in accept_ranges
+                    and numeric_length >= 1024 * 1024
+                )
+            )
+            if not needs_get:
+                return head
+            try:
+                head.close()
+            except Exception:
+                pass
+
+        # Range: bytes=0-0 yanıtı hem gerçek boyutu hem de çok parçalı desteği
+        # gösterir; sunucu 200 dönerse tek akışa düşülür.
+        return self.session.get(
+            self.task.url,
+            headers={**headers, "Range": "bytes=0-0"},
+            allow_redirects=True,
+            stream=True,
+            timeout=(20, 45),
+        )
+
+    def _wait_before_retry(self, seconds: float, attempt: int) -> None:
+        """Duraklat/iptal sinyallerine saygılı geri çekilme beklemesi."""
+        end_time = time.monotonic() + max(0.0, seconds)
+        while time.monotonic() < end_time:
+            if self.should_stop():
+                return
+            time.sleep(min(0.2, max(0.0, end_time - time.monotonic())))
+
+    @staticmethod
+    def _as_download_error(exc: BaseException, prefix: str = "") -> DownloadError:
+        """Alt katmandan gelen hatayı tür bilgisini koruyarak sarmalar."""
+        if isinstance(exc, DownloadError):
+            message = f"{prefix}: {exc}" if prefix else str(exc)
+            return DownloadError(
+                message,
+                kind=exc.kind,
+                code=exc.code,
+                retry_after=getattr(exc, "retry_after", 0.0),
+            )
+        if isinstance(exc, OSError):
+            return error_from_os(exc, prefix)
+        if isinstance(exc, requests.RequestException):
+            return error_from_request(exc, prefix)
+        message = f"{prefix}: {exc}" if prefix else str(exc)
+        return DownloadError(message)
+
     def probe(self) -> None:
         self._check_stop()
         headers = self._headers()
-        response = None
-        try:
+        last_error: DownloadError | None = None
+        for attempt in range(3):
+            response = None
             try:
-                response = self.session.head(
-                    self.task.url,
-                    headers=headers,
-                    allow_redirects=True,
-                    timeout=(20, 45),
-                )
+                response = self._request_probe(headers)
                 status = response.status_code
                 content_type = (response.headers.get("Content-Type") or "").lower()
                 content_length = response.headers.get("Content-Length")
                 accept_ranges = (response.headers.get("Accept-Ranges") or "").lower()
-                # HEAD bazen boş/yanıltıcı olur; boyut yoksa veya HTML dönerse GET ile doğrula.
-                need_probe = (
-                    status >= 400
-                    or not content_length
-                    or "text/html" in content_type
-                    or status in (403, 405, 501)
-                )
-                if need_probe:
-                    response.close()
-                    response = self.session.get(
-                        self.task.url,
-                        headers={**headers, "Range": "bytes=0-0"},
-                        allow_redirects=True,
-                        stream=True,
-                        timeout=(20, 45),
+
+                if status in RETRYABLE_STATUS or 500 <= status < 600:
+                    retry_after = min(
+                        120,
+                        parse_retry_after(
+                            response.headers.get("Retry-After"),
+                            default=min(30, 2 ** attempt),
+                        ),
                     )
-                    status = response.status_code
-                    content_type = (response.headers.get("Content-Type") or "").lower()
-                    content_length = response.headers.get("Content-Length")
-                    accept_ranges = (response.headers.get("Accept-Ranges") or "").lower()
-            except requests.RequestException:
-                response = self.session.get(
-                    self.task.url,
-                    headers={**headers, "Range": "bytes=0-0"},
-                    allow_redirects=True,
-                    stream=True,
-                    timeout=(20, 45),
+                    message = (
+                        f"Sunucu geçici olarak yanıt vermiyor (HTTP {status})."
+                        if status in RETRYABLE_STATUS
+                        else f"Sunucu HTTP {status} döndürdü."
+                    )
+                    raise error_from_http(status, message, retry_after=retry_after)
+
+                if status in (401, 403):
+                    raise AuthenticationError(
+                        f"Sunucu erişimi reddetti (HTTP {status}). Site oturum/çerez istiyor olabilir."
+                    )
+                if status == 404:
+                    raise ResourceNotFoundError("Video bulunamadı (HTTP 404). Bağlantı eski olabilir.")
+                if status >= 400 and status != 416:
+                    raise error_from_http(status, f"Sunucu HTTP {status} döndürdü.")
+
+                content_type_main = content_type.split(";")[0].strip()
+                if "text/html" in content_type_main or "application/xhtml" in content_type_main:
+                    raise NotDirectError("Bağlantı bir web sayfası; yt-dlp ile denenecek.")
+
+                content_range = response.headers.get("Content-Range") or ""
+                range_total = 0
+                match = re.search(r"/\s*(\d+)\s*$", content_range)
+                if match:
+                    range_total = int(match.group(1))
+                total = range_total
+                if not total and content_length and status != 206:
+                    try:
+                        total = int(content_length)
+                    except ValueError:
+                        total = 0
+                if status == 206:
+                    self.ranges_supported = True
+                elif "bytes" in accept_ranges:
+                    self.ranges_supported = True
+                elif total and total > 0:
+                    # HEAD 200 + Accept-Ranges yok; Range desteklemediğini varsay.
+                    self.ranges_supported = False
+
+                self.final_url = response.url or self.task.url
+                self.total = max(0, total)
+                self.etag = str(response.headers.get("ETag") or "").strip()
+                self.last_modified = str(response.headers.get("Last-Modified") or "").strip()
+                disposition = response.headers.get("Content-Disposition")
+                filename = filename_from_url(
+                    self.final_url,
+                    disposition,
+                    content_type_main,
+                    fallback_title=self.task.title or "video",
                 )
-                status = response.status_code
-                content_type = (response.headers.get("Content-Type") or "").lower()
-                content_length = response.headers.get("Content-Length")
-                accept_ranges = (response.headers.get("Accept-Ranges") or "").lower()
-
-            if status in (401, 403):
-                raise DownloadError(
-                    f"Sunucu erişimi reddetti (HTTP {status}). Site oturum/çerez istiyor olabilir."
+                # "video", "watch", "index" gibi genel adlarda sayfa başlığını kullan.
+                generic = {
+                    "video", "watch", "play", "index", "master", "manifest",
+                    "stream", "media", "download",
+                }
+                base = os.path.splitext(filename)[0].lower()
+                if self.task.title and base in generic:
+                    ext = os.path.splitext(filename)[1] or ".mp4"
+                    filename = sanitize_filename(self.task.title + ext)
+                self.filename = filename
+                self.title_cb(self.task.title or os.path.splitext(filename)[0], filename, self.total)
+                self.log_cb(
+                    f"Probe: {self.final_url} | {self.total} bayt | "
+                    f"range={self.ranges_supported} | {self.filename}"
                 )
-            if status == 404:
-                raise DownloadError("Video bulunamadı (HTTP 404). Bağlantı eski olabilir.")
-            if status >= 400 and status != 416:
-                raise DownloadError(f"Sunucu HTTP {status} döndürdü.")
+                return
+            except NotDirectError:
+                raise
+            except DownloadError as exc:
+                last_error = exc
+                if attempt < 2 and is_transient_error(exc):
+                    wait = min(120, max(exc.retry_after, min(30, 2 ** attempt)))
+                    self._wait_before_retry(wait, attempt)
+                    continue
+                raise
+            except requests.RequestException as exc:
+                last_error = error_from_request(exc, "Bağlantı kurulamadı")
+                if attempt < 2 and is_transient_error(last_error):
+                    self.log_cb(
+                        f"Bağlantı yeniden denenecek ({attempt + 1}/3): {last_error}"
+                    )
+                    self._wait_before_retry(min(30, 2 ** attempt), attempt)
+                    continue
+                raise last_error from exc
+            finally:
+                if response is not None:
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+        if last_error is not None:
+            raise last_error
+        raise DownloadError("Bağlantı incelenemedi.", code="probe_failed")
 
-            content_type_main = content_type.split(";")[0].strip()
-            if "text/html" in content_type_main or "application/xhtml" in content_type_main:
-                raise NotDirectError("Bağlantı bir web sayfası; yt-dlp ile denenecek.")
+    def _same_device(self, first: Path, second: Path) -> bool:
+        try:
+            return os.stat(first).st_dev == os.stat(second).st_dev
+        except OSError:
+            return False
 
-            content_range = response.headers.get("Content-Range") or ""
-            range_total = 0
-            match = re.search(r"/\s*(\d+)\s*$", content_range)
-            if match:
-                range_total = int(match.group(1))
-            total = range_total
-            if not total and content_length and status != 206:
-                try:
-                    total = int(content_length)
-                except ValueError:
-                    total = 0
-            if status == 206:
-                self.ranges_supported = True
-            elif "bytes" in accept_ranges:
-                self.ranges_supported = True
-            elif total and total > 0:
-                # HEAD 200 + Accept-Ranges yok; Range desteklemediğini varsay.
-                self.ranges_supported = False
+    def _output_dir(self) -> Path:
+        output_dir = Path(self.config.download_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
 
-            self.final_url = response.url or self.task.url
-            self.total = max(0, total)
-            self.etag = str(response.headers.get("ETag") or "").strip()
-            self.last_modified = str(response.headers.get("Last-Modified") or "").strip()
-            disposition = response.headers.get("Content-Disposition")
-            filename = filename_from_url(
-                self.final_url,
-                disposition,
-                content_type_main,
-                fallback_title=self.task.title or "video",
+    def _ensure_space(self, required: int, phase: str) -> None:
+        """Disk doluysa indirmeyi yarım bırakmadan önce anlaşılır hata ver."""
+        required = max(0, int(required or 0))
+        if required <= 0:
+            return
+        output_dir = self._output_dir()
+        available = free_space(output_dir)
+        if available <= 0:
+            return
+        if required > available:
+            raise DiskSpaceError(
+                f"Yeterli disk alanı yok ({phase}): {human_size(required)} gerekli, "
+                f"{human_size(available)} boş. Klasör: {output_dir}"
             )
-            # "video", "watch", "index" gibi genel adlarda sayfa başlığını kullan.
-            generic = {"video", "watch", "play", "index", "master", "manifest", "stream", "media", "download"}
-            base = os.path.splitext(filename)[0].lower()
-            if self.task.title and base in generic:
-                ext = os.path.splitext(filename)[1] or ".mp4"
-                filename = sanitize_filename(self.task.title + ext)
-            self.filename = filename
-            self.title_cb(self.task.title or os.path.splitext(filename)[0], filename, self.total)
-        except requests.RequestException as exc:
-            raise DownloadError(f"Bağlantı kurulamadı: {exc}") from exc
-        finally:
-            if response is not None:
-                try:
-                    response.close()
-                except Exception:
-                    pass
 
-        self._check_stop()
-        self.log_cb(
-            f"Probe: {self.final_url} | {self.total} bayt | range={self.ranges_supported} | {self.filename}"
-        )
+    def _check_initial_space(self) -> None:
+        if not self.total:
+            return
+        remaining = max(0, self.total - self._downloaded)
+        same_device = self._same_device(self.part_dir, self._output_dir())
+        if len(self.segments) > 1:
+            # Parçalar tamamlandıktan sonra birleştirme sırasında final dosya
+            # için bir kat daha yer gerekir (parçalar silinmeden yazılır).
+            required = (remaining + self.total if same_device else self.total) + SPACE_MARGIN
+        elif same_device:
+            required = remaining + SPACE_MARGIN
+        else:
+            required = self.total + SPACE_MARGIN
+        self._ensure_space(required, "indirme")
 
     # -------------------------------------------------------------- meta/parts
     def _load_or_create_meta(self) -> None:
@@ -410,12 +540,12 @@ class DirectDownloader:
         except Exception:
             pass
 
-    def _set_error(self, message: str) -> None:
+    def _set_error(self, error: DownloadError) -> None:
         with self._error_lock:
             if not self._error:
-                self._error = message
+                self._error = error
 
-    def _get_error(self) -> str | None:
+    def _get_error(self) -> DownloadError | None:
         with self._error_lock:
             return self._error
 
@@ -437,10 +567,12 @@ class DirectDownloader:
             return
 
         attempt = 0
+        retry_after = 0.0
         session = requests.Session()
         session.headers.update({"User-Agent": USER_AGENT})
         try:
             while not self.should_stop():
+                retry_after = 0.0
                 try:
                     request_start = start + existing
                     if expected and request_start > end:
@@ -457,12 +589,28 @@ class DirectDownloader:
                     ) as response:
                         if self.should_stop():
                             return
+                        if response.status_code in RETRYABLE_STATUS:
+                            retry_after = parse_retry_after(
+                                response.headers.get("Retry-After"),
+                                default=min(30, 2 ** attempt),
+                            )
+                            raise error_from_http(
+                                response.status_code,
+                                f"Sunucu geçici hata döndürdü (HTTP {response.status_code}).",
+                                retry_after=retry_after,
+                            )
                         if response.status_code == 416:
                             if expected and existing >= expected:
                                 return
-                            raise DownloadError("Sunucu istenen bayt aralığını reddetti (416).")
+                            raise PermanentDownloadError(
+                                "Sunucu istenen bayt aralığını reddetti (416).",
+                                code="http_416",
+                            )
                         if response.status_code not in (200, 206):
-                            raise DownloadError(f"Parça isteği HTTP {response.status_code} döndürdü.")
+                            raise error_from_http(
+                                response.status_code,
+                                f"Parça isteği HTTP {response.status_code} döndürdü.",
+                            )
                         if response.status_code == 200:
                             if len(self.segments) > 1 or existing > 0:
                                 # Sunucu Range'i yok saydı; tek akışa düş.
@@ -496,7 +644,10 @@ class DirectDownloader:
                         return
                     if size == existing:
                         # Sunucu ilerleme vermeden bağlantıyı kapattı.
-                        raise DownloadError("İndirme beklenmedik şekilde durdu.")
+                        raise TransientDownloadError(
+                            "İndirme beklenmedik şekilde durdu.",
+                            code="stalled",
+                        )
                     existing = size
                     attempt = 0
                 except (requests.RequestException, DownloadError, OSError) as exc:
@@ -504,16 +655,28 @@ class DirectDownloader:
                         return
                     if self.range_failed.is_set():
                         return
-                    attempt += 1
-                    if attempt > 3:
-                        self._set_error(f"Parça {index + 1}: {exc}")
+                    error = self._as_download_error(exc, f"Parça {index + 1}")
+                    if not is_transient_error(error):
+                        # 403/404, SSL ve disk hatalarında boşuna geri çekilme.
+                        self._set_error(error)
                         return
-                    self.log_cb(f"Parça {index + 1} yeniden deneniyor ({attempt}/3): {exc}")
-                    end_time = time.monotonic() + min(8, 2 ** attempt)
-                    while time.monotonic() < end_time:
-                        if self.should_stop():
-                            return
-                        time.sleep(0.1)
+                    attempt += 1
+                    if attempt > MAX_PART_RETRIES:
+                        self._set_error(error)
+                        return
+                    wait = min(
+                        60.0,
+                        max(
+                            float(retry_after),
+                            float(getattr(error, "retry_after", 0.0) or 0.0),
+                            float(2 ** attempt),
+                        ),
+                    )
+                    self.log_cb(
+                        f"Parça {index + 1} yeniden deneniyor "
+                        f"({attempt}/{MAX_PART_RETRIES}, {wait:.0f} sn): {error}"
+                    )
+                    self._wait_before_retry(wait, attempt)
                     existing = self._part_size(index)
         finally:
             session.close()
@@ -567,14 +730,15 @@ class DirectDownloader:
             return
         error = self._get_error()
         if error:
-            raise DownloadError(error)
+            raise error
         # Tüm parçaların boyutlarını doğrula.
         for index, segment in enumerate(self.segments):
             expected = int(segment["end"]) - int(segment["start"]) + 1
             size = self._part_size(index)
             if expected > 0 and size < expected:
-                raise DownloadError(
-                    f"Parça {index + 1} eksik kaldı ({human_size(size)} / {human_size(expected)})."
+                raise TransientDownloadError(
+                    f"Parça {index + 1} eksik kaldı ({human_size(size)} / {human_size(expected)}).",
+                    code="incomplete_part",
                 )
 
     def _run_single(self) -> None:
@@ -592,7 +756,9 @@ class DirectDownloader:
         if self.total and existing >= self.total:
             return
         attempt = 0
+        retry_after = 0.0
         while not self.should_stop():
+            retry_after = 0.0
             try:
                 headers = self._headers()
                 if existing and self.ranges_supported:
@@ -606,12 +772,28 @@ class DirectDownloader:
                 ) as response:
                     if self.should_stop():
                         return
+                    if response.status_code in RETRYABLE_STATUS:
+                        retry_after = parse_retry_after(
+                            response.headers.get("Retry-After"),
+                            default=min(30, 2 ** attempt),
+                        )
+                        raise error_from_http(
+                            response.status_code,
+                            f"Sunucu geçici hata döndürdü (HTTP {response.status_code}).",
+                            retry_after=retry_after,
+                        )
                     if response.status_code == 416:
                         if self.total and existing >= self.total:
                             return
-                        raise DownloadError("Sunucu istenen bayt aralığını reddetti (416).")
+                        raise PermanentDownloadError(
+                            "Sunucu istenen bayt aralığını reddetti (416).",
+                            code="http_416",
+                        )
                     if response.status_code not in (200, 206):
-                        raise DownloadError(f"Sunucu HTTP {response.status_code} döndürdü.")
+                        raise error_from_http(
+                            response.status_code,
+                            f"Sunucu HTTP {response.status_code} döndürdü.",
+                        )
                     if response.status_code == 200:
                         if existing:
                             self._adjust_bytes(-existing)
@@ -658,29 +840,45 @@ class DirectDownloader:
                 if size >= self.total:
                     return
                 if size == existing:
-                    raise DownloadError("İndirme beklenmedik şekilde durdu.")
+                    raise TransientDownloadError(
+                        "İndirme beklenmedik şekilde durdu.",
+                        code="stalled",
+                    )
                 existing = size
                 attempt = 0
             except (requests.RequestException, DownloadError, OSError) as exc:
                 if self.should_stop():
                     return
+                error = self._as_download_error(exc)
+                if not is_transient_error(error):
+                    raise error from exc
                 attempt += 1
-                if attempt > 3:
-                    raise DownloadError(str(exc)) from exc
-                self.log_cb(f"Yeniden deneniyor ({attempt}/3): {exc}")
-                end_time = time.monotonic() + min(8, 2 ** attempt)
-                while time.monotonic() < end_time:
-                    if self.should_stop():
-                        return
-                    time.sleep(0.1)
+                if attempt > MAX_PART_RETRIES:
+                    raise error from exc
+                wait = min(
+                    60.0,
+                    max(
+                        float(retry_after),
+                        float(getattr(error, "retry_after", 0.0) or 0.0),
+                        float(2 ** attempt),
+                    ),
+                )
+                self.log_cb(
+                    f"Yeniden deneniyor ({attempt}/{MAX_PART_RETRIES}, {wait:.0f} sn): {error}"
+                )
+                self._wait_before_retry(wait, attempt)
                 existing = self._part_size(0)
 
     # ------------------------------------------------------------------- merge
     def _merge_parts(self) -> str:
         self.status_cb("processing", t("task.detail.merging"))
-        output_dir = Path(self.config.download_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._output_dir()
         final_path = unique_path(output_dir, self.filename or f"video-{self.task.id}.mp4")
+        copy_required = len(self.segments) > 1 or not self._same_device(
+            self._part_path(0), output_dir
+        )
+        if copy_required and self.total:
+            self._ensure_space(self.total + SPACE_MARGIN, "birleştirme")
         if len(self.segments) == 1:
             part = self._part_path(0)
             try:
@@ -697,11 +895,13 @@ class DirectDownloader:
                         if self.should_stop():
                             raise DownloadCanceled()
                 os.replace(temp_path, final_path)
-            except Exception:
+            except Exception as exc:
                 try:
                     temp_path.unlink()
                 except OSError:
                     pass
+                if isinstance(exc, OSError):
+                    raise error_from_os(exc, "Birleştirme başarısız") from exc
                 raise
         shutil.rmtree(self.part_dir, ignore_errors=True)
         return str(final_path)
@@ -712,6 +912,7 @@ class DirectDownloader:
         self.probe()
         self._check_stop()
         self._load_or_create_meta()
+        self._check_initial_space()
         self._emit_progress(force=True)
         if self.total and self._downloaded >= self.total:
             self._check_stop()
@@ -724,8 +925,9 @@ class DirectDownloader:
         if self.total:
             downloaded = sum(self._part_size(i) for i in range(len(self.segments)))
             if downloaded < self.total:
-                raise DownloadError(
-                    f"İndirme tamamlanmadı ({human_size(downloaded)} / {human_size(self.total)})."
+                raise TransientDownloadError(
+                    f"İndirme tamamlanmadı ({human_size(downloaded)} / {human_size(self.total)}).",
+                    code="incomplete_download",
                 )
         return self._merge_parts()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -102,6 +103,15 @@ class DownloadsPage(tk.Frame):
 
         paste = make_button(head, t("downloads.paste"), self.paste_from_clipboard, kind="link", size=9, bg=CARD, pady=2)
         paste.pack(side="right")
+        make_button(
+            head,
+            t("downloads.batch"),
+            self.open_batch_dialog,
+            kind="link",
+            size=9,
+            bg=CARD,
+            pady=2,
+        ).pack(side="right", padx=(0, 8))
         make_button(
             head,
             t("downloads.open_folder"),
@@ -287,6 +297,151 @@ class DownloadsPage(tk.Frame):
         self.url_entry.set_value(text)
         self.url_entry.icursor("end")
         self.url_entry.focus_set()
+
+    def open_batch_dialog(self) -> None:
+        """Birden çok bağlantıyı tek pencerede kuyruğa ekleme."""
+        dialog = tk.Toplevel(self)
+        dialog.title(t("downloads.batch_title"))
+        dialog.configure(bg=BG)
+        dialog.transient(self.winfo_toplevel())
+        dialog.geometry("680x430")
+        dialog.minsize(520, 340)
+        dialog.grab_set()
+
+        card = tk.Frame(
+            dialog,
+            bg=CARD,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        card.pack(fill="both", expand=True, padx=18, pady=18)
+
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="both", expand=True, padx=18, pady=16)
+
+        tk.Label(
+            inner,
+            text=t("downloads.batch_hint"),
+            bg=CARD,
+            fg=MUTED,
+            font=font(9),
+            anchor="w",
+            justify="left",
+            wraplength=620,
+        ).pack(fill="x", pady=(0, 10))
+
+        editor = tk.Frame(inner, bg=CARD)
+        editor.pack(fill="both", expand=True)
+        text = tk.Text(
+            editor,
+            bg=theme.CARD_ALT,
+            fg=TEXT,
+            insertbackground=TEXT,
+            selectbackground=ACCENT_SOFT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor="#6d8dff",
+            font=font(10),
+            wrap="none",
+            undo=True,
+            padx=10,
+            pady=8,
+        )
+        text.pack(side="left", fill="both", expand=True)
+        scrollbar = tk.Scrollbar(
+            editor,
+            orient="vertical",
+            command=text.yview,
+            bg=CARD_ALT,
+            troughcolor=CARD,
+            relief="flat",
+            bd=0,
+        )
+        scrollbar.pack(side="right", fill="y")
+        text.configure(yscrollcommand=scrollbar.set)
+        placeholder = t("downloads.batch_placeholder")
+        text.insert("1.0", placeholder)
+        text.configure(fg=TEXT_DIM)
+
+        def clear_placeholder(_event=None):
+            if text.get("1.0", "end").strip() == placeholder.strip():
+                text.delete("1.0", "end")
+                text.configure(fg=TEXT)
+
+        def restore_placeholder(_event=None):
+            if not text.get("1.0", "end").strip():
+                text.insert("1.0", placeholder)
+                text.configure(fg=TEXT_DIM)
+
+        text.bind("<FocusIn>", clear_placeholder)
+        text.bind("<FocusOut>", restore_placeholder)
+
+        actions = tk.Frame(inner, bg=CARD)
+        actions.pack(fill="x", pady=(12, 0))
+        make_button(
+            actions,
+            t("downloads.batch_cancel"),
+            dialog.destroy,
+            kind="ghost",
+            size=9,
+            bg=CARD,
+        ).pack(side="right")
+        add_button = make_button(
+            actions,
+            t("downloads.batch_add"),
+            lambda: self._add_batch(dialog, text),
+            kind="primary",
+            size=9,
+            padx=18,
+            pady=7,
+        )
+        add_button.pack(side="right", padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        text.bind("<Control-Return>", lambda _event: self._add_batch(dialog, text))
+        text.bind("<Control-a>", self._select_all_text)
+        dialog.after(50, text.focus_set)
+
+    @staticmethod
+    def _select_all_text(event) -> str:
+        widget = event.widget
+        widget.tag_add("sel", "1.0", "end-1c")
+        widget.mark_set("insert", "1.0")
+        widget.see("insert")
+        return "break"
+
+    def _add_batch(self, dialog: tk.Toplevel, text: tk.Text) -> None:
+        raw = text.get("1.0", "end").strip()
+        if raw == t("downloads.batch_placeholder").strip():
+            raw = ""
+        links = [part for part in re.split(r"[\s,]+", raw) if part]
+        if not links:
+            self.app.toast(t("downloads.toast.no_url"), "warning")
+            return
+        label = self.quality_combo.get()
+        quality = LABEL_TO_QUALITY.get(label, "best")
+        try:
+            added, duplicate, invalid = self.app.manager.add_urls(links, quality=quality)
+        except Exception as exc:
+            self.app.toast(t("downloads.toast.add_failed", error=exc), "error")
+            return
+        dialog.destroy()
+        if not added and not duplicate and not invalid:
+            self.app.toast(t("downloads.toast.batch_none"), "warning")
+        else:
+            message = t(
+                "downloads.toast.batch_summary",
+                added=added,
+                duplicate=duplicate,
+                invalid=invalid,
+            )
+            if added:
+                self.app.toast(message, "success")
+            else:
+                self.app.toast(message, "warning")
+        self.app.refresh_now()
 
     def set_filter(self, key: str) -> None:
         if key == self._filter:

@@ -50,6 +50,16 @@ class DownloadTaskTests(unittest.TestCase):
         restored = DownloadTask.from_dict({"id": "", "url": "https://x.test/a.mp4"})
         self.assertTrue(restored.id)
 
+    def test_retry_fields_roundtrip(self):
+        task = DownloadTask(
+            url="https://x.test/a.mp4",
+            retry_count=2,
+            available_at=1234.5,
+        )
+        restored = DownloadTask.from_dict(task.to_dict())
+        self.assertEqual(restored.retry_count, 2)
+        self.assertEqual(restored.available_at, 1234.5)
+
     def test_status_and_quality_helpers(self):
         self.assertEqual(status_label("queued"), "Sırada")
         self.assertEqual(status_label("bilinmeyen"), "bilinmeyen")
@@ -81,6 +91,11 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(capture.title, "Başlık")
         self.assertEqual(capture.referer, "https://x.test/watch")
         self.assertEqual(capture.media_kind, "video")
+
+    def test_probe_timestamp_roundtrip(self):
+        capture = Capture(url="https://x.test/video.mp4", probed_at=987.5)
+        restored = Capture.from_dict(capture.to_dict())
+        self.assertEqual(restored.probed_at, 987.5)
 
 
 class YoutubeArgsTests(unittest.TestCase):

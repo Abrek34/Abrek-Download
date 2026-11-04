@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.9.0"
+VERSION = "1.11.0"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -38,6 +38,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "speed_limit_kbps": 0,
     "cookies_browser": "none",
     "auto_resume": True,
+    "auto_retry": True,
+    "auto_retry_limit": 2,
     "notify_captures": True,
     "notify_downloads": True,
     "capture_paused": False,
@@ -81,6 +83,13 @@ class Config:
             self.data["speed_limit_kbps"] = max(0, int(self.data.get("speed_limit_kbps", 0)))
         except (TypeError, ValueError):
             self.data["speed_limit_kbps"] = 0
+        try:
+            self.data["auto_retry_limit"] = max(
+                0, min(5, int(self.data.get("auto_retry_limit", 2)))
+            )
+        except (TypeError, ValueError):
+            self.data["auto_retry_limit"] = 2
+        self.data["auto_retry"] = bool(self.data.get("auto_retry", True))
         quality = str(self.data.get("default_quality", "best"))
         if quality not in {"best", "2160", "1440", "1080", "720", "480", "audio"}:
             quality = "best"

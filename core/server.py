@@ -94,6 +94,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             "Access-Control-Max-Age": "86400",
             "Vary": "Origin",
         }
+        if self.headers.get("Access-Control-Request-Private-Network") == "true":
+            # Chrome'un genel sitelerden yerel ağa erişim ön kontrolü.
+            headers["Access-Control-Allow-Private-Network"] = "true"
         if origin and origin_allowed(origin):
             headers["Access-Control-Allow-Origin"] = origin
         elif not origin:
@@ -204,6 +207,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             snapshot = self.manager.snapshot()
             self._send_json(200, {"ok": True, "tasks": snapshot["tasks"], **{k: v for k, v in snapshot.items() if k not in {"tasks", "captures"}}})
             return
+        if path == "/api/stats":
+            self._send_json(200, {"ok": True, **self.manager.stats()})
+            return
+        if path.startswith("/api/tasks/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3:
+                task = self.manager.get_task(unquote(parts[2]))
+                if task is None:
+                    self._send_json(404, {"ok": False, "error": "Görev bulunamadı."})
+                    return
+                self._send_json(200, {"ok": True, "task": task.snapshot()})
+                return
         if path == "/":
             self._send_html(200, self._dashboard_html())
             return
@@ -260,6 +275,25 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "duplicate": duplicate, "task": task.snapshot()})
             return
+
+        if path.startswith("/api/captures/") and path.endswith("/download"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 4:
+                capture_id = unquote(parts[2])
+                try:
+                    task, duplicate = self.manager.download_capture(capture_id)
+                except ValueError as exc:
+                    self._send_json(404, {"ok": False, "error": str(exc)})
+                    return
+                except Exception as exc:
+                    log.exception("Yakalanan video indirilemedi")
+                    self._send_json(500, {"ok": False, "error": str(exc)})
+                    return
+                self._send_json(
+                    200,
+                    {"ok": True, "duplicate": duplicate, "task": task.snapshot()},
+                )
+                return
 
         if path.startswith("/api/tasks/"):
             parts = path.strip("/").split("/")

@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 os.environ["ABREK_LANG"] = "tr"
@@ -15,18 +17,21 @@ from core.utils import (
     clean_error,
     filename_from_url,
     first_url_argument,
+    free_space,
     human_duration,
     human_eta,
     human_size,
     human_speed,
     is_http_url,
     is_manifest_url,
+    is_transient_error,
     is_youtube_url,
     load_json,
     normalize_url,
     parse_eta_text,
     parse_number,
     parse_percent,
+    parse_retry_after,
     parse_speed,
     sanitize_filename,
     unique_path,
@@ -125,6 +130,44 @@ class ParseTests(unittest.TestCase):
     def test_clean_error(self):
         text = "WARNING: bir şey\nERROR: asıl hata\nson satır"
         self.assertEqual(clean_error(text), "asıl hata")
+
+    def test_parse_retry_after(self):
+        self.assertEqual(parse_retry_after("120"), 120)
+        self.assertEqual(parse_retry_after("12.5"), 12)
+        self.assertEqual(parse_retry_after("", default=5), 5)
+        self.assertEqual(parse_retry_after("geçersiz", default=7), 7)
+        moment = datetime.now(timezone.utc) + timedelta(seconds=900)
+        value = format_datetime(moment, usegmt=True)
+        self.assertTrue(880 <= parse_retry_after(value) <= 900)
+
+    def test_is_transient_error(self):
+        for message in (
+            "Connection reset by peer",
+            "HTTP 503 Service Unavailable",
+            "timed out",
+            "Bağlantı kesildi",
+            "HTTP 429 Too Many Requests",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(is_transient_error(message))
+        for message in (
+            "HTTP 404 Not Found",
+            "HTTP 403 Forbidden",
+            "This video is DRM protected",
+            "Private video",
+            "Unsupported URL",
+            "certificate verify failed",
+            "No space left on device",
+            "",
+        ):
+            with self.subTest(message=message):
+                self.assertFalse(is_transient_error(message))
+        self.assertFalse(is_transient_error("video unavailable due to connection?"))
+
+    def test_free_space(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertGreater(free_space(directory), 0)
+            self.assertGreater(free_space(Path(directory) / "yok" / "alt"), 0)
 
 
 class FileTests(unittest.TestCase):

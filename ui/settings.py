@@ -217,6 +217,42 @@ class SettingsPage(tk.Frame):
             variable=self.auto_resume_var,
             style="TCheckbutton",
         ).pack(fill="x", pady=(0, 6))
+
+        auto_retry_box = tk.Frame(body, bg=CARD)
+        auto_retry_box.pack(fill="x", pady=(0, 6))
+        self.auto_retry_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            auto_retry_box,
+            text=t("settings.auto_retry"),
+            variable=self.auto_retry_var,
+            style="TCheckbutton",
+            command=self._sync_auto_retry_controls,
+        ).pack(anchor="w")
+        tk.Label(
+            auto_retry_box,
+            text=t("settings.auto_retry_hint"),
+            bg=CARD,
+            fg=MUTED,
+            font=font(8),
+            anchor="w",
+            justify="left",
+            wraplength=720,
+        ).pack(fill="x", padx=(24, 0), pady=(2, 0))
+
+        retry_row = self._row(
+            body,
+            t("settings.auto_retry_limit"),
+            t("settings.auto_retry_limit_hint"),
+        )
+        self.auto_retry_limit_combo = ttk.Combobox(
+            retry_row,
+            state="readonly",
+            values=[str(index) for index in range(6)],
+            width=6,
+            font=font(10),
+        )
+        self.auto_retry_limit_combo.pack(side="right", padx=(16, 0), ipady=2)
+
         self.notify_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             body,
@@ -383,6 +419,13 @@ class SettingsPage(tk.Frame):
         self.speed_entry.delete(0, "end")
         self.speed_entry.insert(0, str(config.get("speed_limit_kbps", 0)))
         self.auto_resume_var.set(bool(config.get("auto_resume", True)))
+        self.auto_retry_var.set(bool(config.get("auto_retry", True)))
+        try:
+            retry_limit = max(0, min(5, int(config.get("auto_retry_limit", 2) or 0)))
+        except (TypeError, ValueError):
+            retry_limit = 2
+        self.auto_retry_limit_combo.set(str(retry_limit))
+        self._sync_auto_retry_controls()
         self.notify_var.set(bool(config.get("notify_captures", True)))
         self.notify_downloads_var.set(bool(config.get("notify_downloads", True)))
         self.capture_paused_var.set(bool(config.get("capture_paused", False)))
@@ -456,6 +499,17 @@ class SettingsPage(tk.Frame):
             self.app.toast(str(exc), "error")
             return
 
+        try:
+            auto_retry_limit = self._parse_int(
+                self.auto_retry_limit_combo.get(),
+                t("settings.auto_retry_limit"),
+                0,
+                5,
+            )
+        except ValueError as exc:
+            self.app.toast(str(exc), "error")
+            return
+
         quality = LABEL_TO_QUALITY.get(self.quality_combo.get(), "best")
         cookie_label_to_code = {label: code for label, code in get_cookie_options()}
         cookies = cookie_label_to_code.get(self.cookies_combo.get(), "none")
@@ -482,6 +536,8 @@ class SettingsPage(tk.Frame):
                 "cookies_browser": cookies,
                 "language": selected_lang_code,
                 "auto_resume": bool(self.auto_resume_var.get()),
+                "auto_retry": bool(self.auto_retry_var.get()),
+                "auto_retry_limit": auto_retry_limit,
                 "notify_captures": bool(self.notify_var.get()),
                 "notify_downloads": bool(self.notify_downloads_var.get()),
                 "capture_paused": bool(self.capture_paused_var.get()),
@@ -498,6 +554,14 @@ class SettingsPage(tk.Frame):
             self.app.toast(t("settings.restart_required"), "warning")
         else:
             self.app.toast(t("settings.saved_toast"), "success")
+
+    def _sync_auto_retry_controls(self) -> None:
+        try:
+            self.auto_retry_limit_combo.configure(
+                state="readonly" if self.auto_retry_var.get() else "disabled"
+            )
+        except (AttributeError, tk.TclError):
+            pass
 
     def _parse_int(self, value: str, name: str, low: int, high: int) -> int:
         try:

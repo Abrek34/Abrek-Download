@@ -6,11 +6,16 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import tempfile
 import time
 import unicodedata
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
+from .errors import is_transient
 
 # Tarayıcı benzeri kullanıcı ajanı; bazı CDN'ler varsayılan UA'yı reddediyor.
 USER_AGENT = (
@@ -377,6 +382,59 @@ def parse_speed(value: str | None) -> float:
         "pib": 1024 ** 5,
     }
     return amount * factors.get(unit, 0)
+
+
+def parse_retry_after(value: str | None, default: int = 0) -> int:
+    """HTTP ``Retry-After`` başlığını saniyeye çevirir.
+
+    Hem ``120`` gibi saniye hem de ``Wed, 21 Oct 2015 07:28:00 GMT`` gibi
+    HTTP tarihi biçimini destekler. Geçersiz değerde ``default`` döner.
+    """
+    if not value:
+        return max(0, int(default))
+    text = str(value).strip()
+    try:
+        return max(0, int(float(text)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        moment = parsedate_to_datetime(text)
+        if moment is None:
+            return max(0, int(default))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return max(0, int((moment - datetime.now(timezone.utc)).total_seconds()))
+    except Exception:
+        return max(0, int(default))
+
+
+def free_space(path: str | Path) -> int:
+    """Yolun bulunduğu dosya sistemindeki boş bayt miktarı.
+
+    Yol henüz yoksa en yakın var olan üst dizin kullanılır. Disk bilgisi
+    okunamazsa 0 döner; çağıran taraf 0'ı "bilinmiyor" olarak yorumlamalıdır.
+    """
+    candidate = Path(path)
+    for _ in range(12):
+        try:
+            return int(shutil.disk_usage(str(candidate)).free)
+        except FileNotFoundError:
+            if candidate.parent == candidate:
+                return 0
+            candidate = candidate.parent
+        except OSError:
+            return 0
+    return 0
+
+
+def is_transient_error(value: BaseException | str | None) -> bool:
+    """Hatanın geçici olup olmadığını tipli bilgiye göre söyler.
+
+    ``DownloadError`` nesnelerinde ``kind`` alanı doğrudan kullanılır. Düz
+    metinler ise yalnızca dış araç çıktıları için geri uyumluluk amacıyla
+    deterministik bir eşlemeyle sınıflandırılır.
+    """
+    return is_transient(value)
 
 
 def file_size(path: str | Path | None) -> int:

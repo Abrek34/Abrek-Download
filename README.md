@@ -4,7 +4,7 @@ Linux için, tarayıcı eklentisiyle çalışan bir video indirici. İnternette 
 oynatılan videoları otomatik yakalar; YouTube gibi sitelerde `yt-dlp`, doğrudan
 medya dosyalarında çok parçalı indirme motoru kullanır.
 
-Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.9.0**.
+Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.11.0**.
 
 ## Özellikler
 
@@ -15,11 +15,17 @@ Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.9.0**
   indirici medya dosyaları için.
 - **Duraklat / devam et / iptal / yeniden dene.** Hatalı indirmeleri tek
   düğmeyle topluca yeniden deneyin.
+- **Otomatik yeniden deneme:** ağ, zaman aşımı ve HTTP 429/5xx gibi geçici
+  hatalarda görev artan bekleme süresiyle kendiliğinden yeniden denenir.
+  DRM, 404 ve özel video gibi kalıcı hatalar boşuna tekrarlanmaz.
 - **Kuyruk:** aynı anda birden fazla indirme, hız ve ETA gösterimi.
 - **Kalıcı kuyruk:** uygulama kapanıp açıldığında yarım indirmeler kaldığı
   yerden devam eder.
 - **Kalite seçimi:** en iyi, 4K, 2K, 1080p, 720p, 480p veya sadece ses.
-- **Toplu işlem:** yakalanan videoların tümünü tek tıkla kuyruğa ekleyin.
+- **Toplu işlem:** yakalanan videoların tümünü veya yapıştırdığınız birden çok
+  bağlantıyı tek seferde kuyruğa ekleyin.
+- **Disk güvenliği:** indirme ve birleştirme öncesinde boş alan denetlenir;
+  yer yetersizse yarım dosya bırakmak yerine anlaşılır hata verilir.
 - **Yakalama denetimi:** tarayıcı yakalamasını uygulamadan duraklatın/sürdürün,
   yakalanan bağlantıyı kopyalayın ve indirme klasörünü tek tıkla açın.
 - **Ayrıntılar:** hata günlüğünü görüntüleyin, bağlantıyı kopyalayın.
@@ -56,7 +62,9 @@ Kullanım ve sürüm bilgisi:
 ```
 
 Yerel köprü üzerinden çalışan görevler `POST /api/tasks/<id>/pause`,
-`resume`, `cancel` ve `retry` uçlarıyla da denetlenebilir.
+`resume`, `cancel` ve `retry` uçlarıyla denetlenebilir. `GET /api/tasks/<id>`,
+`GET /api/stats` ve `POST /api/captures/<id>/download` uçları görev ayrıntısı,
+özet sayaçlar ve yakalanan videoyu doğrudan kuyruğa ekleme sağlar.
 
 İlk çalıştırmada `.venv` sanal ortamı oluşturulur ve `yt-dlp` kurulur.
 Video birleştirme ve ses çıkarma için `ffmpeg`/`ffprobe`, YouTube'un JS
@@ -171,6 +179,8 @@ Alternatif olarak Firefox Developer Edition, Nightly veya ESR kullanıp
 3. Abrek Download'daki **Yakalananlar** sekmesinde videoyu görüp **İndir**'e basın.
 4. Alternatif olarak **İndirilenler** sekmesindeki bağlantı alanına bir video
    sayfası veya medya adresi yapıştırıp kalite seçerek indirebilirsiniz.
+   **Toplu bağlantı** düğmesiyle her satıra bir adres yazarak birçok indirmeyi
+   tek seferde kuyruğa ekleyebilirsiniz.
 
 İndirilen dosyalar varsayılan olarak `~/İndirilenler/VideoAvci` klasörüne
 kaydedilir. **Ayarlar** sekmesinden değiştirilebilir.
@@ -189,7 +199,8 @@ kaydedilir. **Ayarlar** sekmesinden değiştirilebilir.
 - Varsayılan kalite
 - Hız sınırı (KB/s, `0` = sınırsız)
 - Giriş gerektiren siteler için çerez kaynağı (Brave, Firefox, Chrome, Chromium)
-- Otomatik devam ve masaüstü bildirimleri
+- Otomatik devam, geçici hatalarda otomatik yeniden deneme ve deneme sayısı
+- Masaüstü bildirimleri
 - yt-dlp güncelleme
 
 Çerez kullanırken tarayıcının kapalı olması gerekir; aksi halde çerez veritabanı

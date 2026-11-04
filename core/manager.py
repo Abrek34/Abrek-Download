@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin
@@ -30,10 +32,10 @@ from .config import (
 from .direct import (
     DirectDownloader,
     DownloadCanceled as DirectCanceled,
-    DownloadError as DirectError,
     DownloadPaused as DirectPaused,
     NotDirectError,
 )
+from .errors import DownloadError
 from .i18n import t
 from .models import (
     ACTIVE_STATUSES,
@@ -42,11 +44,14 @@ from .models import (
     FINISHED_STATUSES,
     make_capture,
 )
+from .probe import MediaProbe, hls_first_segment, probe_bytes
 from .utils import (
+    USER_AGENT,
     atomic_write_json,
     file_size,
     is_http_url,
     is_manifest_url,
+    is_transient_error,
     is_youtube_url,
     load_json,
     normalize_url,
@@ -55,7 +60,6 @@ from .utils import (
 )
 from .ytdlp import (
     DownloadCanceled as YtCanceled,
-    DownloadError as YtError,
     DownloadPaused as YtPaused,
     YtDlpDownloader,
     youtube_extra_args,
@@ -69,6 +73,49 @@ log = logging.getLogger("videoavci.manager")
 # HLS/DASH parçaları genellikle birkaç yüz KB'tır; bozuk/çok büyük parçalar
 # uygulamanın belleğini şişirmesin.
 PROBE_MAX_BYTES = 4 * 1024 * 1024
+
+# Yakalama analizleri sınırlı sayıda işçiyle yürütülür. Her yakalama için ayrı
+# iş parçacığı açmak, yüzlerce yakalama biriktiğinde uygulamayı yoruyordu.
+PROBE_WORKERS = 2
+PROBE_MAX_AGE = 24 * 60 * 60
+
+# Geçici ağ hatalarında görev otomatik olarak yeniden kuyruğa alınır.
+AUTO_RETRY_BASE_DELAY = 15
+AUTO_RETRY_MAX_DELAY = 120
+AUTO_RETRY_RETRY_AFTER_CAP = 300
+
+# Yerleşik probe için indirilen azami örnek boyutu ve range ile okunacak kuyruk.
+PROBE_TAIL_BYTES = 4 * 1024 * 1024
+PROBE_MAX_REDIRECTS = 5
+
+
+@dataclass
+class _ProbeSample:
+    """Yakalama analizi için indirilen sınırlı medya örneği."""
+
+    data: bytes = b""
+    text: str = ""
+    final_url: str = ""
+    content_type: str = ""
+    manifest: MediaProbe | None = None
+    tail: bytes = b""
+
+
+def capture_needs_probe(capture: Capture, now_value: float | None = None) -> bool:
+    """Yakalamanın çözünürlük/ses analizine ihtiyacı olup olmadığını söyler."""
+    if capture.media_kind not in {"", "video", "manifest"}:
+        return False
+    probed_at = float(getattr(capture, "probed_at", 0.0) or 0.0)
+    if probed_at <= 0:
+        return True
+    current = time.time() if now_value is None else float(now_value)
+    return (current - probed_at) >= PROBE_MAX_AGE
+
+
+def auto_retry_delay(attempt: int) -> int:
+    """Yeniden deneme sayısına göre üstel geri çekilme süresi (saniye)."""
+    attempt = max(1, int(attempt))
+    return min(AUTO_RETRY_MAX_DELAY, AUTO_RETRY_BASE_DELAY * (2 ** (attempt - 1)))
 
 
 def prune_orphan_parts(
@@ -131,11 +178,18 @@ class DownloadManager:
         self._shutting_down = False
         self._finish_action_done = False
         self._ytdlp_version_cache: str | None = None
+        self._probe_queue: queue.Queue[str] = queue.Queue()
+        self._probe_enqueued: set[str] = set()
         self._probe_pending: set[str] = set()
         self._load()
+        for index in range(PROBE_WORKERS):
+            threading.Thread(
+                target=self._probe_worker,
+                name=f"videoavci-probe-{index + 1}",
+                daemon=True,
+            ).start()
         for _capture in list(self.captures):
-            if _capture.media_kind in ("", "video") or (_capture.media_kind == "manifest" and not _capture.media_info):
-                self._schedule_probe(_capture.id)
+            self._schedule_probe(_capture.id)
         self._scheduler = threading.Thread(
             target=self._scheduler_loop,
             name="videoavci-scheduler",
@@ -163,6 +217,14 @@ class DownloadManager:
                     task.auto_resume = True
                 if task.status == "paused" and task.auto_resume and self.config.get("auto_resume", True):
                     task.status = "queued"
+                try:
+                    task.retry_count = max(0, int(task.retry_count or 0))
+                except (TypeError, ValueError):
+                    task.retry_count = 0
+                try:
+                    task.available_at = max(0.0, float(task.available_at or 0.0))
+                except (TypeError, ValueError):
+                    task.available_at = 0.0
                 task.speed = 0.0
                 task.eta = 0
                 task.updated_at = now()
@@ -180,10 +242,11 @@ class DownloadManager:
                     continue
                 if not is_http_url(capture.url) or capture.url in seen:
                     continue
+                try:
+                    capture.probed_at = max(0.0, float(capture.probed_at or 0.0))
+                except (TypeError, ValueError):
+                    capture.probed_at = 0.0
                 seen.add(capture.url)
-                # Eski etiketleri yeniden analiz et.
-                if capture.media_kind == "manifest":
-                    capture.media_info = ""
                 self.captures.append(capture)
             self.captures.sort(key=lambda capture: capture.created_at, reverse=True)
             self.captures = self.captures[:200]
@@ -228,6 +291,12 @@ class DownloadManager:
             completed = sum(1 for task in self.tasks.values() if task.status == "completed")
             errors = sum(1 for task in self.tasks.values() if task.status == "error")
             speed = sum(task.speed for task in self.tasks.values() if task.status in ACTIVE_STATUSES)
+            current = time.time()
+            retrying = sum(
+                1
+                for task in self.tasks.values()
+                if task.status == "queued" and float(task.available_at or 0.0) > current
+            )
             return {
                 "tasks": tasks,
                 "captures": captures,
@@ -235,6 +304,7 @@ class DownloadManager:
                 "queued": queued,
                 "completed": completed,
                 "errors": errors,
+                "retrying": retrying,
                 "speed": speed,
                 "capture_count": len(captures),
                 "capture_paused": bool(self.config.get("capture_paused", False)),
@@ -242,9 +312,15 @@ class DownloadManager:
 
     def stats(self) -> dict[str, Any]:
         with self.lock:
+            current = time.time()
             return {
                 "active": sum(1 for task in self.tasks.values() if task.status in ACTIVE_STATUSES),
                 "queued": sum(1 for task in self.tasks.values() if task.status == "queued"),
+                "retrying": sum(
+                    1
+                    for task in self.tasks.values()
+                    if task.status == "queued" and float(task.available_at or 0.0) > current
+                ),
                 "completed": sum(1 for task in self.tasks.values() if task.status == "completed"),
                 "errors": sum(1 for task in self.tasks.values() if task.status == "error"),
                 "captures": len(self.captures),
@@ -336,6 +412,37 @@ class DownloadManager:
             log.info("Görev eklendi: %s %s", task.id, url)
             return task, False
 
+    def add_urls(self, urls: list[str], quality: str | None = None) -> tuple[int, int, int]:
+        """Birden çok bağlantıyı tek kilitle kuyruğa ekler.
+
+        Dönen değer: ``(eklenen, zaten kuyrukta, geçersiz)``. Toplu eklemede
+        her URL için ayrı kuyruk dosyası yazılmaz; tek kayıt yapılır.
+        """
+        added = duplicate = invalid = 0
+        with self.lock:
+            existing_urls = {
+                task.url
+                for task in self.tasks.values()
+                if task.status not in {"completed", "canceled"}
+            }
+            for raw in urls:
+                url = normalize_url(str(raw or ""))
+                if not is_http_url(url):
+                    invalid += 1
+                    continue
+                if url in existing_urls:
+                    duplicate += 1
+                    continue
+                self._add_task_locked(url, quality=quality)
+                existing_urls.add(url)
+                added += 1
+            if added:
+                self._save_locked()
+                self._wake.set()
+        if added:
+            log.info("Toplu ekleme: %s yeni görev", added)
+        return added, duplicate, invalid
+
     def add_capture(self, payload: dict[str, Any]) -> tuple[Capture, bool]:
         capture = make_capture(payload)
         capture.url = normalize_url(capture.url)
@@ -393,214 +500,314 @@ class DownloadManager:
             return f"{match.group(1)}p"
         return ""
 
-    def _fetch_first_segment(self, url: str, referer: str = "") -> bytes | None:
+    def _read_probe_response(
+        self,
+        session: requests.Session,
+        url: str,
+        headers: dict[str, str],
+        *,
+        byte_range: str = "",
+    ):
+        """Tek bir probe yanıtını sınırlı boyutta okur."""
+        request_headers = dict(headers)
+        if byte_range:
+            request_headers["Range"] = byte_range
+        with session.get(
+            url,
+            headers=request_headers,
+            timeout=(10, 20),
+            allow_redirects=True,
+            stream=True,
+        ) as response:
+            if response.status_code not in (200, 206):
+                return None
+            response_headers = getattr(response, "headers", {}) or {}
+            content_type = str(response_headers.get("Content-Type") or "")
+            content_length = str(response_headers.get("Content-Length") or "")
+            content_range = str(response_headers.get("Content-Range") or "")
+            total = 0
+            match = re.search(r"/\s*(\d+)\s*$", content_range)
+            if match:
+                total = int(match.group(1))
+            elif content_length:
+                try:
+                    total = int(content_length)
+                except ValueError:
+                    total = 0
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                data.extend(chunk)
+                if len(data) > PROBE_MAX_BYTES:
+                    # Beklenenden büyük parçayı belleğe almayalım.
+                    return None
+            return (
+                bytes(data),
+                str(getattr(response, "url", "") or url),
+                content_type,
+                total,
+            )
+
+    def _fetch_probe_sample(
+        self, url: str, referer: str = ""
+    ) -> _ProbeSample | None:
+        """HLS/DASH/MP4/TS/WebM için sınırlı bir analiz örneği indirir."""
         headers = {
             "Referer": referer or url,
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
         }
-        s = requests.Session()
+        session = requests.Session()
         current = url
         visited: set[str] = set()
+        init_data = b""
+        manifest: MediaProbe | None = None
         try:
-            while True:
+            for _ in range(PROBE_MAX_REDIRECTS):
                 if current in visited:
                     return None
                 visited.add(current)
-                with s.get(
-                    current,
-                    headers=headers,
-                    timeout=(10, 20),
-                    allow_redirects=True,
-                    stream=True,
-                ) as response:
-                    if response.status_code != 200:
-                        return None
-                    data = bytearray()
-                    for chunk in response.iter_content(chunk_size=64 * 1024):
-                        if not chunk:
-                            continue
-                        data.extend(chunk)
-                        if len(data) > PROBE_MAX_BYTES:
-                            # Beklenenden büyük parçayı belleğe almayalım;
-                            # analizden vazgeçip yt-dlp yoluna bırakıyoruz.
-                            return None
-                if not data.lstrip().startswith(b"#EXTM3U"):
-                    return bytes(data)
-                text = data.decode("utf-8", errors="replace")
-                segments = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
-                if not segments:
-                    return None
-                current = urljoin(current, segments[0])
+                result = self._read_probe_response(session, current, headers)
+                if result is None:
+                    return _ProbeSample(init_data, "", current, "", manifest)
+                data, final_url, content_type, total = result
+                text = data.decode("utf-8", errors="replace") if data else ""
+
+                if data.lstrip().startswith(b"#EXTM3U") or "mpegurl" in content_type.lower():
+                    manifest = probe_bytes(data, text, final_url) or manifest
+                    if "#EXT-X-STREAM-INF:" in text.upper():
+                        return _ProbeSample(b"", text, final_url, content_type, manifest)
+                    init_uri, segment_uri = hls_first_segment(text)
+                    if init_uri:
+                        init_result = self._read_probe_response(
+                            session, urljoin(final_url, init_uri), headers
+                        )
+                        if init_result is not None:
+                            init_data = init_result[0]
+                    if not segment_uri:
+                        return _ProbeSample(
+                            init_data, "", final_url, content_type, manifest
+                        )
+                    current = urljoin(final_url, segment_uri)
+                    continue
+
+                if b"<MPD" in data[:4096]:
+                    manifest = probe_bytes(data, text, final_url) or manifest
+                    return _ProbeSample(data, text, final_url, content_type, manifest)
+
+                # Doğrudan dosya: moov/kuyruk bilgisi için son baytları da al.
+                tail = b""
+                if total > len(data) and total > 0:
+                    tail_start = max(0, total - PROBE_TAIL_BYTES)
+                    tail_result = self._read_probe_response(
+                        session,
+                        final_url,
+                        headers,
+                        byte_range=f"bytes={tail_start}-",
+                    )
+                    if tail_result is not None:
+                        tail = tail_result[0]
+                payload = init_data + data if init_data else data
+                return _ProbeSample(
+                    payload,
+                    text if not init_data else "",
+                    final_url,
+                    content_type,
+                    manifest,
+                    tail,
+                )
+            return _ProbeSample(init_data, "", current, "", manifest)
         except Exception:
             return None
         finally:
-            s.close()
+            session.close()
+
+    def _fetch_first_segment(self, url: str, referer: str = "") -> bytes | None:
+        """Geriye uyumluluk için ilk analiz örneğinin baytlarını döner."""
+        sample = self._fetch_probe_sample(url, referer)
+        return sample.data if sample and sample.data else None
 
     def _schedule_probe(self, capture_id: str) -> None:
+        """Yakalamayı sınırlı işçi havuzuna ekler; aynı kimliği iki kez eklemez."""
         with self.lock:
-            if capture_id in self._probe_pending:
+            if capture_id in self._probe_enqueued or capture_id in self._probe_pending:
                 return
             capture = next((item for item in self.captures if item.id == capture_id), None)
-            if capture is None:
+            if capture is None or not capture_needs_probe(capture):
                 return
-            # Zaten probe edilmiş ve son 24 saattir geçmemişse tekrar probe etme.
-            last_probe = getattr(capture, "_probe_timestamp", 0)
-            if capture.media_kind == "manifest" and capture.media_info and \
-               (time.time() - last_probe) < 86400:  # 24 * 3600
-                return
-            # Probe zamanını fresh tut.
-            capture._probe_timestamp = time.time()
-            if capture.media_kind not in ("", "video", "manifest"):
-                return
-            if capture.media_kind == "manifest" and capture.media_info:
-                return
-            self._probe_pending.add(capture_id)
-        thread = threading.Thread(
-            target=self._probe_capture,
-            args=(capture_id,),
-            name=f"videoavci-probe-{capture_id}",
-            daemon=True,
-        )
-        thread.start()
+            self._probe_enqueued.add(capture_id)
+            self._probe_queue.put(capture_id)
 
-    def _probe_capture(self, capture_id: str) -> None:
-        try:
+    def _probe_worker(self) -> None:
+        while not self._stop.is_set():
+            try:
+                capture_id = self._probe_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
             with self.lock:
-                capture = next((item for item in self.captures if item.id == capture_id), None)
-                if capture is None:
-                    return
-                url = capture.url
-                referer = capture.referer or capture.page_url
-                original_kind = capture.kind
-                original_media_kind = capture.media_kind
+                self._probe_enqueued.discard(capture_id)
+                self._probe_pending.add(capture_id)
+            try:
+                self._probe_capture(capture_id)
+            except Exception:
+                log.exception("Yakalama analizi beklenmedik şekilde durdu: %s", capture_id)
+            finally:
+                self._probe_queue.task_done()
 
-            # Önce segment indirip ffprobe ile analiz et (HLS/DASH için daha güvenilir).
-            segment_data = self._fetch_first_segment(url, referer)
-            if segment_data:
-                fd, tmp_path = tempfile.mkstemp(prefix="va_probe_", suffix=".bin")
-                try:
-                    with os.fdopen(fd, "wb") as fh:
-                        fh.write(segment_data)
-                    cmd = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", tmp_path]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-                    if result.returncode == 0 and result.stdout.strip():
-                        info = json.loads(result.stdout)
-                        streams = info.get("streams") or []
-                        has_video = any(str(s.get("codec_type")) == "video" for s in streams)
-                        has_audio = any(str(s.get("codec_type")) == "audio" for s in streams)
-                        height = 0
-                        for s in streams:
-                            if str(s.get("codec_type")) == "video":
-                                try:
-                                    height = int(s.get("height") or 0)
-                                except (TypeError, ValueError):
-                                    height = 0
-                                break
-                        if original_kind in {"hls", "dash"}:
-                            new_kind = "manifest"
-                        elif has_video and has_audio:
-                            new_kind = "av"
-                        elif has_video:
-                            new_kind = "video"
-                        elif has_audio:
-                            new_kind = "audio"
-                        else:
-                            new_kind = original_media_kind or ""
-                        media_info = ""
-                        if height:
-                            media_info = f"{height}p"
-                        elif has_audio and not has_video:
-                            media_info = "ses"
-                        if original_kind in {"hls", "dash"}:
-                            if has_audio:
-                                media_info = (media_info + " · sesli").strip() if media_info else "sesli"
-                            else:
-                                media_info = (media_info + " · sessiz").strip() if media_info else "sessiz"
-                        with self.lock:
-                            capture = next((item for item in self.captures if item.id == capture_id), None)
-                            if capture is not None:
-                                changed = False
-                                if new_kind and capture.media_kind != new_kind:
-                                    capture.media_kind = new_kind
-                                    changed = True
-                                if media_info and capture.media_info != media_info:
-                                    capture.media_info = media_info
-                                    changed = True
-                                if changed:
-                                    self._save_locked()
-                        return
-                except Exception:
-                    pass
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-            if not url:
-                return
-            cmd = [
-                sys.executable,
-                "-m",
-                "yt_dlp",
-                "--ignore-config",
-                "--no-playlist",
-                "--no-warnings",
-                "--socket-timeout",
-                "20",
-                "--dump-single-json",
-            ]
-            cmd += youtube_extra_args(url)
-            if referer:
-                cmd += ["--referer", referer]
-            cmd += [url]
+    @staticmethod
+    def _probe_with_ffprobe(data: bytes) -> MediaProbe | None:
+        """Son çare olarak ffprobe ile akış bilgisi çıkarır."""
+        if not data or not shutil.which("ffprobe"):
+            return None
+        fd, tmp_path = tempfile.mkstemp(prefix="va_probe_", suffix=".bin")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_streams",
+                    "-of",
+                    "json",
+                    tmp_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return None
+            info = json.loads(result.stdout)
+        except Exception:
+            return None
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        streams = info.get("streams") or []
+        has_video = any(str(stream.get("codec_type")) == "video" for stream in streams)
+        has_audio = any(str(stream.get("codec_type")) == "audio" for stream in streams)
+        width = height = 0
+        for stream in streams:
+            if str(stream.get("codec_type")) != "video":
+                continue
+            try:
+                stream_height = int(stream.get("height") or 0)
+                stream_width = int(stream.get("width") or 0)
+            except (TypeError, ValueError):
+                stream_height = stream_width = 0
+            if stream_height > height:
+                height = stream_height
+                width = stream_width
+        return MediaProbe(
+            has_video=has_video,
+            has_audio=has_audio,
+            width=width,
+            height=height,
+            heights=(height,) if height else (),
+            source="ffprobe",
+        )
+
+    @staticmethod
+    def _probe_with_ytdlp(url: str, referer: str) -> MediaProbe | None:
+        """Yerleşik ayrıştırıcı yetersizse yt-dlp meta verisini kullanır."""
+        if not url:
+            return None
+        from .utils import USER_AGENT
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--ignore-config",
+            "--no-playlist",
+            "--no-warnings",
+            "--socket-timeout",
+            "20",
+            "--user-agent",
+            USER_AGENT,
+            "--dump-single-json",
+        ]
+        cmd += youtube_extra_args(url)
+        if referer:
+            cmd += ["--add-header", f"Referer:{referer}"]
+        cmd += [url]
+        try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=45,
             )
-            if result.returncode != 0 or not result.stdout.strip():
-                # yt-dlp başarısız olursa URL'den çözünürlük çıkarmayı dene.
-                media_info = self._resolution_from_url(url)
-                with self.lock:
-                    capture = next((item for item in self.captures if item.id == capture_id), None)
-                    if capture is not None and media_info and capture.media_info != media_info:
-                        capture.media_info = media_info
-                        self._save_locked()
-                return
-            try:
-                info = json.loads(result.stdout)
-            except (ValueError, TypeError):
-                return
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        try:
+            info = json.loads(result.stdout)
+        except (ValueError, TypeError):
+            return None
 
-            formats = info.get("formats") or [info]
-            has_video = any(str(f.get("video_ext") or "").lower() not in ("", "none", None) for f in formats) or str(info.get("video_ext") or "").lower() not in ("", "none", None)
-            has_audio = any(str(f.get("audio_ext") or "").lower() not in ("", "none", None) for f in formats) or str(info.get("audio_ext") or "").lower() not in ("", "none", None)
+        formats = info.get("formats") or [info]
+        has_video = any(
+            str(format_info.get("video_ext") or "").lower() not in ("", "none")
+            for format_info in formats
+        ) or str(info.get("video_ext") or "").lower() not in ("", "none")
+        has_audio = any(
+            str(format_info.get("audio_ext") or "").lower() not in ("", "none")
+            for format_info in formats
+        ) or str(info.get("audio_ext") or "").lower() not in ("", "none")
+        heights = sorted(
+            {
+                int(format_info.get("height"))
+                for format_info in formats
+                if isinstance(format_info.get("height"), int)
+                and format_info.get("height")
+            },
+            reverse=True,
+        )
+        drm = bool(info.get("_has_drm") or info.get("has_drm"))
+        drm = drm or any(bool(format_info.get("has_drm")) for format_info in formats)
+        return MediaProbe(
+            has_video=has_video,
+            has_audio=has_audio,
+            height=heights[0] if heights else 0,
+            heights=tuple(heights),
+            drm=drm,
+            source="yt-dlp",
+        )
 
-            heights = sorted(
-                {int(f.get("height")) for f in formats if isinstance(f.get("height"), int) and f.get("height")},
-                reverse=True,
-            )
-            if has_audio and not has_video:
-                media_info = "sesli"
-            elif heights:
-                if len(heights) > 1:
-                    media_info = f"çoklu ({heights[0]}p)"
-                else:
-                    media_info = f"{heights[0]}p"
-            else:
-                media_info = self._resolution_from_url(url)
-
-            if original_kind in {"hls", "dash"}:
-                if has_audio and has_video:
-                    media_info = (media_info + " · sesli").strip() if media_info and media_info != "sesli" else "sesli"
-                elif has_audio and not has_video:
-                    media_info = "sesli"
-                elif has_video and not has_audio:
-                    media_info = (media_info + " · sessiz").strip() if media_info else "sessiz"
-                else:
-                    media_info = media_info or "sessiz"
-
+    def _apply_probe(
+        self,
+        capture_id: str,
+        probe: MediaProbe | None,
+        original_kind: str,
+        original_media_kind: str,
+        url: str,
+    ) -> None:
+        """Analiz sonucunu yakalamaya işler; bilinmeyen alanları korur."""
+        if probe is None:
+            return
+        has_video = probe.has_video
+        has_audio = probe.has_audio
+        media_known = (
+            probe.video_known
+            or probe.audio_known
+            or has_video
+            or has_audio
+        )
+        if not media_known and not probe.drm:
+            # Hiçbir bilgi çıkmadıysa yalnızca URL ipucunu kullan.
+            media_info = self._resolution_from_url(url)
+            new_kind = ""
+        else:
             if original_kind in {"hls", "dash"}:
                 new_kind = "manifest"
             elif has_video and has_audio:
@@ -612,30 +819,109 @@ class DownloadManager:
             else:
                 new_kind = original_media_kind or ""
 
+            media_info = ""
+            if probe.heights and len(probe.heights) > 1:
+                media_info = f"çoklu ({probe.heights[0]}p)"
+            elif probe.height:
+                media_info = f"{probe.height}p"
+            elif has_audio and not has_video:
+                media_info = "ses"
+
+            if original_kind in {"hls", "dash"}:
+                if has_audio and not has_video:
+                    media_info = "sesli"
+                elif has_audio:
+                    media_info = (
+                        f"{media_info} · sesli".strip() if media_info else "sesli"
+                    )
+                elif probe.audio_known:
+                    media_info = (
+                        f"{media_info} · sessiz".strip() if media_info else "sessiz"
+                    )
+            if not media_info:
+                media_info = self._resolution_from_url(url)
+
+        with self.lock:
+            capture = next((item for item in self.captures if item.id == capture_id), None)
+            if capture is None:
+                return
+            changed = False
+            if new_kind and capture.media_kind != new_kind:
+                capture.media_kind = new_kind
+                changed = True
+            if media_info and capture.media_info != media_info:
+                capture.media_info = media_info
+                changed = True
+            if probe.drm and not capture.drm:
+                capture.drm = True
+                changed = True
+            if changed:
+                self._save_locked()
+
+    def _probe_capture(self, capture_id: str) -> None:
+        try:
             with self.lock:
                 capture = next((item for item in self.captures if item.id == capture_id), None)
                 if capture is None:
                     return
-                changed = False
-                if new_kind and capture.media_kind != new_kind:
-                    capture.media_kind = new_kind
-                    changed = True
-                if media_info and capture.media_info != media_info:
-                    capture.media_info = media_info
-                    changed = True
-                if changed:
-                    self._save_locked()
+                url = capture.url
+                referer = capture.referer or capture.page_url
+                original_kind = capture.kind
+                original_media_kind = capture.media_kind
+            if not url:
+                return
+
+            probe = MediaProbe(video_known=False, audio_known=False)
+            sample = self._fetch_probe_sample(url, referer)
+            if sample is not None:
+                # Manifest ve indirilen örnek birbirini tamamlar (ör. HLS init
+                # haritası ses/görüntü bilgisini, segment ise çözünürlüğü verir).
+                probe = probe.merged(sample.manifest)
+                if sample.data:
+                    probe = probe.merged(
+                        probe_bytes(sample.data, sample.text, sample.final_url or url)
+                    )
+                if sample.tail:
+                    probe = probe.merged(probe_bytes(sample.tail))
+
+            is_text_sample = False
+            if sample is not None and sample.data:
+                head = sample.data[:256].lstrip().lower()
+                is_text_sample = head.startswith(b"#extm3u") or b"<mpd" in head
+
+            if not probe.complete and sample is not None and not is_text_sample:
+                probe = probe.merged(self._probe_with_ffprobe(sample.data))
+
+            if not probe.complete:
+                probe = probe.merged(self._probe_with_ytdlp(url, referer))
+
+            self._apply_probe(
+                capture_id,
+                probe,
+                original_kind,
+                original_media_kind,
+                url,
+            )
         except Exception:
             log.debug("Medya sondası başarısız: %s", capture_id, exc_info=True)
         finally:
             with self.lock:
+                capture = next((item for item in self.captures if item.id == capture_id), None)
+                if capture is not None:
+                    # Başarısız analizler de zaman damgası alır; böylece aynı
+                    # yakalama her istekte yeniden denenip kaynak tüketmez.
+                    capture.probed_at = now()
                 self._probe_pending.discard(capture_id)
+                self._save_locked()
 
     def download_capture(self, capture_id: str) -> tuple[DownloadTask, bool]:
         with self.lock:
             capture = next((item for item in self.captures if item.id == capture_id), None)
             if capture is None:
                 raise ValueError("Yakalanan video bulunamadı.")
+            if capture.drm:
+                # DRM korumalı içerik indirilemez; korumayı aşmaya çalışmıyoruz.
+                raise ValueError(t("error.drm"))
             for existing in self.tasks.values():
                 if existing.url == capture.url and existing.status not in {"completed", "canceled"}:
                     return existing, True
@@ -713,6 +999,8 @@ class DownloadManager:
             task.error = ""
             task.speed = 0.0
             task.eta = 0
+            task.retry_count = 0
+            task.available_at = 0.0
             task.auto_resume = True
             task.detail = t("task.status.queued")
             task.updated_at = now()
@@ -762,6 +1050,8 @@ class DownloadManager:
             task.eta = 0
             task.downloaded = 0
             task.total = 0
+            task.retry_count = 0
+            task.available_at = 0.0
             task.detail = t("task.status.queued")
             task.auto_resume = True
             task.updated_at = now()
@@ -805,9 +1095,16 @@ class DownloadManager:
             self._save_locked()
 
     def clear_queue(self) -> int:
-        """Tüm indirme görevlerini (aktif olanlar dahil) listeden kaldırır."""
+        """Tüm indirme görevlerini (aktif olanlar dahil) listeden kaldırır.
+
+        Aktif görevlerin iş parçacıkları kendi ``finally`` bloklarında
+        temizlenene kadar ``active_ids`` korunur. Böylece yeni kuyruk
+        temizlendikten hemen sonra eşzamanlılık sınırı aşılmaz.
+        """
         with self.lock:
-            active_ids = [tid for tid, task in self.tasks.items() if task.status in ACTIVE_STATUSES]
+            active_ids = {
+                tid for tid, task in self.tasks.items() if task.status in ACTIVE_STATUSES
+            }
             for task_id in active_ids:
                 self.cancel_requested.add(task_id)
                 controller = self.controllers.get(task_id)
@@ -817,13 +1114,23 @@ class DownloadManager:
                     except Exception:
                         pass
             removed = len(self.tasks)
-            for task_id in list(self.tasks.keys()):
-                self._cleanup_parts(task_id)
+            for task_id, task in self.tasks.items():
+                if task_id not in active_ids:
+                    self._cleanup_parts(task_id)
             self.tasks.clear()
-            self.active_ids.clear()
-            self.controllers.clear()
-            self.pause_requested.clear()
-            self.cancel_requested.clear()
+            # aktif_ids/controllers/cancel_requested bilinçli olarak bırakılır:
+            # çalışan görevlerin iş parçacıkları bunları kendileri temizler.
+            self.pause_requested = {
+                task_id for task_id in self.pause_requested if task_id in active_ids
+            }
+            self.cancel_requested = {
+                task_id for task_id in self.cancel_requested if task_id in active_ids
+            }
+            self.controllers = {
+                task_id: controller
+                for task_id, controller in self.controllers.items()
+                if task_id in active_ids
+            }
             self._finish_action_done = False
             self._save_locked()
             self._wake.set()
@@ -852,6 +1159,54 @@ class DownloadManager:
     def _cleanup_parts(self, task_id: str) -> None:
         shutil.rmtree(PARTS_DIR / task_id, ignore_errors=True)
 
+    def _maybe_auto_retry_locked(self, task: DownloadTask, error: object) -> bool:
+        """Geçici hatada görevi geri çekilme süresiyle yeniden kuyruğa alır.
+
+        Kalıcı hatalar (DRM, 404, özel video vb.) yeniden denenmez. Dönüş
+        değeri görevin otomatik yeniden denemeye alınıp alınmadığını belirtir.
+        """
+        if not bool(self.config.get("auto_retry", True)):
+            return False
+        try:
+            limit = max(0, min(5, int(self.config.get("auto_retry_limit", 2) or 0)))
+        except (TypeError, ValueError):
+            limit = 2
+        if limit <= 0 or task.retry_count >= limit:
+            return False
+        message = str(error or "")
+        if not is_transient_error(error):
+            return False
+
+        task.retry_count += 1
+        retry_after = float(getattr(error, "retry_after", 0.0) or 0.0)
+        delay = max(
+            auto_retry_delay(task.retry_count),
+            min(AUTO_RETRY_RETRY_AFTER_CAP, int(retry_after)),
+        )
+        task.status = "queued"
+        task.available_at = time.time() + delay
+        task.error = message
+        task.speed = 0.0
+        task.eta = 0
+        task.detail = t(
+            "task.detail.auto_retry",
+            count=task.retry_count,
+            limit=limit,
+            seconds=delay,
+        )
+        task.auto_resume = True
+        task.updated_at = now()
+        self._finish_action_done = False
+        log.warning(
+            "Görev geçici hatayla durdu, %s sn sonra yeniden denenecek "
+            "(%s/%s): %s",
+            delay,
+            task.retry_count,
+            limit,
+            message,
+        )
+        return True
+
     # ------------------------------------------------------------------ scheduler
     def _scheduler_loop(self) -> None:
         while not self._stop.is_set():
@@ -861,22 +1216,27 @@ class DownloadManager:
                     if not self._shutting_down:
                         max_concurrent = int(self.config.get("max_concurrent", 2) or 2)
                         if len(self.active_ids) < max_concurrent:
+                            current = time.time()
                             for task in self.tasks.values():
-                                if task.status == "queued" and task.id not in self.active_ids:
-                                    task.status = "starting"
-                                    task.detail = t("task.status.starting")
-                                    task.updated_at = now()
-                                    self.active_ids.add(task.id)
-                                    thread = threading.Thread(
-                                        target=self._run_task,
-                                        args=(task.id,),
-                                        name=f"videoavci-task-{task.id}",
-                                        daemon=True,
-                                    )
-                                    self.threads[task.id] = thread
-                                    thread.start()
-                                    started = True
-                                    break
+                                if task.status != "queued" or task.id in self.active_ids:
+                                    continue
+                                if float(task.available_at or 0.0) > current:
+                                    continue
+                                task.available_at = 0.0
+                                task.status = "starting"
+                                task.detail = t("task.status.starting")
+                                task.updated_at = now()
+                                self.active_ids.add(task.id)
+                                thread = threading.Thread(
+                                    target=self._run_task,
+                                    args=(task.id,),
+                                    name=f"videoavci-task-{task.id}",
+                                    daemon=True,
+                                )
+                                self.threads[task.id] = thread
+                                thread.start()
+                                started = True
+                                break
                     if started:
                         self._save_locked()
             except Exception:
@@ -977,7 +1337,7 @@ class DownloadManager:
 
         return callback
 
-    def _probe_av(self, url: str) -> tuple[bool, bool]:
+    def _probe_av(self, url: str, referer: str = "") -> tuple[bool, bool]:
         """URL'nin ses ve görüntü içerip içermediğini yt-dlp ile hızlıca sınar."""
         cmd = ytdlp_base_command() + [
             "--no-playlist",
@@ -985,8 +1345,12 @@ class DownloadManager:
             "--dump-single-json",
             "--socket-timeout",
             "20",
+            "--user-agent",
+            USER_AGENT,
         ]
         cmd += youtube_extra_args(url)
+        if referer:
+            cmd += ["--add-header", f"Referer:{referer}"]
         cmd.append(url)
         try:
             result = subprocess.run(
@@ -1052,8 +1416,30 @@ class DownloadManager:
         for capture in candidates[:3]:
             if capture.media_kind == "audio":
                 return capture.url
-            audio, video = self._probe_av(capture.url)
+            audio, video = self._probe_av(capture.url, task.page_url or capture.page_url)
             if audio and not video:
+                return capture.url
+        return ""
+
+    def _find_combined_stream(self, task: "DownloadTask") -> str:
+        """Ses-only akış bulunamazsa aynı sayfadaki sesli/birleşik akışı döner."""
+        if not task.page_url:
+            return ""
+        with self.lock:
+            candidates = [
+                capture
+                for capture in self.captures
+                if capture.page_url == task.page_url
+                and capture.kind in {"hls", "dash"}
+                and capture.url != task.url
+            ]
+        for capture in candidates:
+            info = (capture.media_info or "").lower()
+            # "1080p · sesli" gibi hem çözünürlük hem ses içeren kayıtlar
+            # birleşik akıştır; sadece "sesli" olanlar ses-only'dir.
+            if "sessiz" in info:
+                continue
+            if "sesli" in info and any(char.isdigit() for char in info):
                 return capture.url
         return ""
 
@@ -1176,6 +1562,16 @@ class DownloadManager:
                         task.audio_url = audio_url
                         self._save_locked()
                         log.info("Eşleşen ses akışı bulundu: %s", audio_url[:160])
+                    else:
+                        # Ses-only akış bulunamazsa/son kullanma tarihi geçmişse,
+                        # aynı sayfadaki sesli (birleşik) akışa geç; böylece video
+                        # sessiz inmez.
+                        combined_url = self._find_combined_stream(task)
+                        if combined_url and combined_url != task.url:
+                            task.url = combined_url
+                            task.audio_url = ""
+                            self._save_locked()
+                            log.info("Sesli birleşik akışa geçildi: %s", combined_url[:160])
                 except Exception:
                     pass
 
@@ -1300,18 +1696,31 @@ class DownloadManager:
                 self._save_locked()
             log.info("Görev iptal edildi: %s", task_id)
 
-        except (DirectError, YtError) as exc:
+        except DownloadError as exc:
             with self.lock:
                 task = self.tasks.get(task_id)
+                retried = False
                 if task is not None:
-                    task.status = "error"
+                    if task_id in self.cancel_requested:
+                        task.status = "canceled"
+                        task.detail = t("task.status.canceled")
+                    elif task_id in self.pause_requested:
+                        task.status = "paused"
+                        task.detail = t("task.status.paused")
+                    else:
+                        retried = self._maybe_auto_retry_locked(task, exc)
                     task.error = str(exc)
                     task.speed = 0.0
                     task.eta = 0
-                    task.detail = t("task.status.error")
+                    if not retried and task.status not in {"canceled", "paused"}:
+                        task.status = "error"
+                        task.detail = t("task.status.error")
                     task.updated_at = now()
                 self._save_locked()
-            log.warning("Görev hatası %s: %s", task_id, exc)
+            if retried:
+                log.warning("Görev otomatik yeniden denemeye alındı %s: %s", task_id, exc)
+            else:
+                log.warning("Görev hatası %s: %s", task_id, exc)
 
         except Exception as exc:
             log.exception("Beklenmeyen görev hatası: %s", task_id)
@@ -1333,6 +1742,10 @@ class DownloadManager:
                 self.threads.pop(task_id, None)
                 self.pause_requested.discard(task_id)
                 self.cancel_requested.discard(task_id)
+                if task_id not in self.tasks:
+                    # Kuyruk temizlendiyse çalışan görevin geçici parçaları
+                    # sonraki açılışı beklemeden silinir.
+                    self._cleanup_parts(task_id)
                 self._save_locked(throttle=False)
             self._wake.set()
 

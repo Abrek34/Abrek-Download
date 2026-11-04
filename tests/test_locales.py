@@ -33,6 +33,12 @@ class LocaleParityTests(unittest.TestCase):
             "stats.capture_paused",
             "cli.help",
             "cli.version",
+            "downloads.batch",
+            "downloads.batch_title",
+            "downloads.toast.batch_summary",
+            "settings.auto_retry",
+            "settings.auto_retry_limit",
+            "task.detail.auto_retry",
         }
         for language in ("tr", "en"):
             data = json.loads((LOCALES_DIR / f"{language}.json").read_text(encoding="utf-8"))
