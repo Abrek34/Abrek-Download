@@ -340,6 +340,9 @@ async function removePending(url) {
 }
 
 async function retryPending() {
+  // Kullanıcı yakalamayı duraklattıysa bekleyenler gönderilmesin; sıra
+  // korunur ve yakalama yeniden açıldığında sonraki alarmda denenir.
+  if (await isCapturePaused()) return;
   const pending = await readPending();
   if (!pending.length) return;
   const remaining = [];
@@ -486,7 +489,10 @@ ext.webRequest.onBeforeRequest.addListener(
       details.type,
     ).catch(() => {});
   },
-  { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
+  {
+    urls: ['<all_urls>'],
+    types: ['media', 'xmlhttprequest', 'other', 'object', 'sub_frame'],
+  },
 );
 
 ext.webRequest.onHeadersReceived.addListener(
@@ -523,7 +529,10 @@ ext.webRequest.onHeadersReceived.addListener(
       contentRange,
     ).catch(() => {});
   },
-  { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
+  {
+    urls: ['<all_urls>'],
+    types: ['media', 'xmlhttprequest', 'other', 'object', 'sub_frame'],
+  },
   ['responseHeaders'],
 );
 

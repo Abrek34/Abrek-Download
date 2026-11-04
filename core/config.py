@@ -12,18 +12,71 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.11.1"
+VERSION = "1.11.2"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
 else:
     PROJECT_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = Path.home() / ".config" / APP_SLUG
-DATA_DIR = Path.home() / ".local" / "share" / APP_SLUG
-STATE_DIR = Path.home() / ".local" / "state" / APP_SLUG
+
+
+def _xdg_dir(env_name: str, fallback: str, home: Path | None = None) -> Path:
+    """XDG ortam değişkenini (geçerliyse) yoksa ev dizinindeki yedeği döner."""
+    home = Path.home() if home is None else Path(home)
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        candidate = Path(value).expanduser()
+        # XDG belirtimine göre göreli yollar yok sayılır.
+        if candidate.is_absolute():
+            return candidate
+    return home / fallback
+
+
+def _xdg_download_dir(
+    home: Path | None = None,
+    config_home: Path | None = None,
+) -> Path:
+    """Kullanıcının XDG İndirilenler klasörünü bulur.
+
+    ``~/.config/user-dirs.dirs`` dosyasındaki ``XDG_DOWNLOAD_DIR`` değeri
+    kullanılır. Dosya yoksa yaygın Türkçe/İngilizce klasör adlarına, o da
+    yoksa ``~/Downloads`` yoluna düşülür.
+    """
+    home = Path.home() if home is None else Path(home)
+    config_home = (
+        _xdg_dir("XDG_CONFIG_HOME", ".config", home)
+        if config_home is None
+        else Path(config_home)
+    )
+    try:
+        lines = (config_home / "user-dirs.dirs").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if key.strip() != "XDG_DOWNLOAD_DIR" or not separator:
+            continue
+        value = value.strip().strip('"').strip("'")
+        value = value.replace("${HOME}", str(home)).replace("$HOME", str(home))
+        candidate = Path(os.path.expanduser(value))
+        if candidate.is_absolute():
+            return candidate
+    for name in ("Downloads", "İndirilenler"):
+        candidate = home / name
+        if candidate.is_dir():
+            return candidate
+    return home / "Downloads"
+
+
+CONFIG_DIR = _xdg_dir("XDG_CONFIG_HOME", ".config") / APP_SLUG
+DATA_DIR = _xdg_dir("XDG_DATA_HOME", ".local/share") / APP_SLUG
+STATE_DIR = _xdg_dir("XDG_STATE_HOME", ".local/state") / APP_SLUG
 LOG_DIR = STATE_DIR / "logs"
 PARTS_DIR = DATA_DIR / "parts"
-DEFAULT_DOWNLOAD_DIR = Path.home() / "İndirilenler" / "VideoAvci"
+DEFAULT_DOWNLOAD_DIR = _xdg_download_dir() / "VideoAvci"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 QUEUE_FILE = DATA_DIR / "queue.json"
 CAPTURES_FILE = DATA_DIR / "captures.json"
@@ -52,17 +105,106 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "shutdown_on_finish": "none",  # none | shutdown | suspend
 }
 
+QUALITIES = {"best", "2160", "1440", "1080", "720", "480", "audio"}
+COOKIE_BROWSERS = {"none", "brave", "firefox", "chrome", "chromium"}
+LANGUAGES = {"tr", "en"}
+THEMES = {"dark", "light"}
+FINISH_ACTIONS = {"none", "shutdown", "suspend"}
+
+_TRUE_VALUES = {"1", "true", "yes", "on", "evet", "açık", "acik"}
+_FALSE_VALUES = {"0", "false", "no", "off", "hayır", "hayir", "kapalı", "kapali"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUE_VALUES:
+            return True
+        if text in _FALSE_VALUES:
+            return False
+    return default
+
+
+def _coerce_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        # JSON'daki 1e999 gibi değerler float('inf') olarak çözülür; int()
+        # OverflowError verir ve ayarların yüklenmesini engellememelidir.
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _coerce_text(value: Any, default: str = "") -> str:
+    return value.strip() if isinstance(value, str) else default
+
 
 def ensure_dirs() -> None:
-    for directory in (CONFIG_DIR, DATA_DIR, STATE_DIR, LOG_DIR, PARTS_DIR, DEFAULT_DOWNLOAD_DIR):
+    for directory in (CONFIG_DIR, DATA_DIR, STATE_DIR, LOG_DIR, PARTS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
 
 class Config:
     def __init__(self, path: Path = CONFIG_FILE):
-        self.path = path
+        self.path = Path(path)
         self.data: dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
         self.load()
+
+    def _normalize(self) -> None:
+        """Bozuk/eski JSON değerlerini güvenli tiplere dönüştürür."""
+        self.data["max_concurrent"] = _coerce_int(
+            self.data.get("max_concurrent"), 2, 1, 5
+        )
+        self.data["connections"] = _coerce_int(
+            self.data.get("connections"), 4, 1, 8
+        )
+        self.data["speed_limit_kbps"] = _coerce_int(
+            self.data.get("speed_limit_kbps"), 0, 0, 1_000_000
+        )
+        self.data["auto_retry_limit"] = _coerce_int(
+            self.data.get("auto_retry_limit"), 2, 0, 5
+        )
+
+        for key in (
+            "auto_resume",
+            "auto_retry",
+            "notify_captures",
+            "notify_downloads",
+            "capture_paused",
+            "watch_clipboard",
+            "download_subtitles",
+        ):
+            self.data[key] = _coerce_bool(self.data.get(key), bool(DEFAULT_CONFIG[key]))
+
+        quality = _coerce_text(self.data.get("default_quality"), "best").lower()
+        self.data["default_quality"] = quality if quality in QUALITIES else "best"
+
+        browser = _coerce_text(self.data.get("cookies_browser"), "none").lower()
+        self.data["cookies_browser"] = browser if browser in COOKIE_BROWSERS else "none"
+
+        language = _coerce_text(self.data.get("language"), "tr").lower()
+        self.data["language"] = language if language in LANGUAGES else "tr"
+
+        theme = _coerce_text(self.data.get("theme"), "dark").lower()
+        self.data["theme"] = theme if theme in THEMES else "dark"
+
+        action = _coerce_text(self.data.get("shutdown_on_finish"), "none").lower()
+        self.data["shutdown_on_finish"] = action if action in FINISH_ACTIONS else "none"
+
+        langs = _coerce_text(self.data.get("subtitle_langs"), "tr,en")
+        self.data["subtitle_langs"] = langs[:200] if langs else "tr,en"
+
+        geometry = _coerce_text(self.data.get("window_geometry"))
+        self.data["window_geometry"] = geometry[:100]
+
+        directory = _coerce_text(self.data.get("download_dir"), str(DEFAULT_DOWNLOAD_DIR))
+        self.data["download_dir"] = os.path.expanduser(directory or str(DEFAULT_DOWNLOAD_DIR))
 
     def load(self) -> None:
         stored = load_json(self.path, {})
@@ -70,36 +212,7 @@ class Config:
             for key, value in stored.items():
                 if key in DEFAULT_CONFIG:
                     self.data[key] = value
-        # Eski/bozuk değerleri düzelt.
-        try:
-            self.data["max_concurrent"] = max(1, min(5, int(self.data.get("max_concurrent", 2))))
-        except (TypeError, ValueError):
-            self.data["max_concurrent"] = 2
-        try:
-            self.data["connections"] = max(1, min(8, int(self.data.get("connections", 4))))
-        except (TypeError, ValueError):
-            self.data["connections"] = 4
-        try:
-            self.data["speed_limit_kbps"] = max(0, int(self.data.get("speed_limit_kbps", 0)))
-        except (TypeError, ValueError):
-            self.data["speed_limit_kbps"] = 0
-        try:
-            self.data["auto_retry_limit"] = max(
-                0, min(5, int(self.data.get("auto_retry_limit", 2)))
-            )
-        except (TypeError, ValueError):
-            self.data["auto_retry_limit"] = 2
-        self.data["auto_retry"] = bool(self.data.get("auto_retry", True))
-        quality = str(self.data.get("default_quality", "best"))
-        if quality not in {"best", "2160", "1440", "1080", "720", "480", "audio"}:
-            quality = "best"
-        self.data["default_quality"] = quality
-        if self.data.get("cookies_browser") not in {"none", "brave", "firefox", "chrome", "chromium"}:
-            self.data["cookies_browser"] = "none"
-        if self.data.get("language") not in {"tr", "en"}:
-            self.data["language"] = "tr"
-        directory = str(self.data.get("download_dir") or DEFAULT_DOWNLOAD_DIR)
-        self.data["download_dir"] = os.path.expanduser(directory)
+        self._normalize()
 
     def save(self) -> None:
         atomic_write_json(self.path, self.data)
@@ -114,6 +227,7 @@ class Config:
         for key, value in values.items():
             if key in DEFAULT_CONFIG:
                 self.data[key] = value
+        self._normalize()
         self.save()
 
     @property

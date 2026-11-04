@@ -186,12 +186,13 @@ class FindMatchingAudioTests(unittest.TestCase):
         )
 
     @staticmethod
-    def capture(url, media_kind="manifest"):
+    def capture(url, media_kind="manifest", drm=False):
         return SimpleNamespace(
             url=url,
             page_url="https://site.test/watch/1",
             kind="hls",
             media_kind=media_kind,
+            drm=drm,
         )
 
     @staticmethod
@@ -222,6 +223,13 @@ class FindMatchingAudioTests(unittest.TestCase):
         manager._probe_av.return_value = (False, True)
         self.assertEqual(DownloadManager._find_matching_audio(manager, self.task()), "")
         self.assertEqual(manager._probe_av.call_count, 3)
+
+    def test_drm_candidates_are_ignored(self):
+        manager = self.make_manager(
+            [self.capture("https://cdn.test/audio.m3u8", "audio", drm=True)]
+        )
+        self.assertEqual(DownloadManager._find_matching_audio(manager, self.task()), "")
+        manager._probe_av.assert_not_called()
 
 
 class MergeAvTests(unittest.TestCase):
@@ -297,6 +305,39 @@ class AudioOnlyDownloadTests(unittest.TestCase):
         )
         self.assertNotIn("--extract-audio", command)
         self.assertNotIn("--write-subs", command)
+
+
+class AvMergeDecisionTests(unittest.TestCase):
+    def test_audio_quality_skips_separate_audio_merge(self):
+        task = DownloadTask(
+            url="https://cdn.test/video.m3u8",
+            kind="hls",
+            quality="audio",
+        )
+        self.assertFalse(DownloadManager._needs_av_merge(task))
+
+    def test_hls_video_quality_needs_audio_merge(self):
+        task = DownloadTask(
+            url="https://cdn.test/video.m3u8",
+            kind="hls",
+            quality="best",
+        )
+        self.assertTrue(DownloadManager._needs_av_merge(task))
+
+    def test_direct_and_already_matched_tasks_do_not_merge(self):
+        direct = DownloadTask(
+            url="https://cdn.test/video.mp4",
+            kind="direct",
+            quality="best",
+        )
+        matched = DownloadTask(
+            url="https://cdn.test/video.m3u8",
+            kind="hls",
+            quality="best",
+            audio_url="https://cdn.test/audio.m3u8",
+        )
+        self.assertFalse(DownloadManager._needs_av_merge(direct))
+        self.assertFalse(DownloadManager._needs_av_merge(matched))
 
 
 class SnapshotTests(unittest.TestCase):

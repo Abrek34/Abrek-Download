@@ -289,6 +289,7 @@
   "toast.audio_exists": "MP3 zaten var.",
   "toast.audio_done": "MP3 oluşturuldu: {name}",
   "toast.audio_failed": "Ses çıkarılamadı: {error}",
+  "toast.audio_no_ffmpeg": "Ses çıkarmak için ffmpeg gerekli; kurulu değil.",
   "toast.file_missing_warn": "Dosya bulunamadı.",
   "notify.download_complete": "İndirme tamamlandı",
   "notify.download_failed": "İndirme başarısız",

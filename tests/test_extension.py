@@ -98,6 +98,19 @@ class ExtensionContractTests(unittest.TestCase):
         ):
             self.assertIn(endpoint, server)
 
+    def test_pending_retry_respects_capture_pause(self):
+        for browser in ("chrome", "firefox"):
+            background = (EXT / browser / "background.js").read_text(encoding="utf-8")
+            retry_body = background.split("async function retryPending()", 1)[1]
+            retry_body = retry_body.split("async function handleDetection", 1)[0]
+            self.assertIn("isCapturePaused()", retry_body)
+
+    def test_network_hooks_cover_object_and_iframe_requests(self):
+        expected = "types: ['media', 'xmlhttprequest', 'other', 'object', 'sub_frame']"
+        for browser in ("chrome", "firefox"):
+            background = (EXT / browser / "background.js").read_text(encoding="utf-8")
+            self.assertEqual(background.count(expected), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 
 from core.i18n import t
 from core.models import QUALITY_LABELS
+from core.utils import looks_like_playlist_url
 
 from . import theme
 from .theme import (
@@ -17,6 +18,7 @@ from .theme import (
     BG,
     BORDER,
     CARD,
+    CARD_ALT,
     CARD_HOVER,
     MUTED,
     TEXT,
@@ -219,7 +221,7 @@ class DownloadsPage(tk.Frame):
 
         # Ağ isteği Tk ana iş parçacığını kilitlememeli; liste kontrolünü
         # arka planda yapıp sonucu ``app.post`` ile arayüze taşı.
-        if "list=" in url or "playlist" in url.lower():
+        if looks_like_playlist_url(url):
             self._check_playlist_async(url, quality)
             return
         self._queue_url(url, quality)

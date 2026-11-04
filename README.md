@@ -4,7 +4,7 @@ Linux için, tarayıcı eklentisiyle çalışan bir video indirici. İnternette 
 oynatılan videoları otomatik yakalar; YouTube gibi sitelerde `yt-dlp`, doğrudan
 medya dosyalarında çok parçalı indirme motoru kullanır.
 
-Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.11.1**.
+Masaüstünde `Abrek-Download-main` klasöründe çalışır. Sürüm: **1.11.2**.
 
 ## Özellikler
 
@@ -182,8 +182,10 @@ Alternatif olarak Firefox Developer Edition, Nightly veya ESR kullanıp
    **Toplu bağlantı** düğmesiyle her satıra bir adres yazarak birçok indirmeyi
    tek seferde kuyruğa ekleyebilirsiniz.
 
-İndirilen dosyalar varsayılan olarak `~/İndirilenler/VideoAvci` klasörüne
-kaydedilir. **Ayarlar** sekmesinden değiştirilebilir.
+İndirilen dosyalar varsayılan olarak sistemin İndirilenler klasörü altındaki
+`VideoAvci` dizinine kaydedilir. Yol, `user-dirs.dirs` içindeki
+`XDG_DOWNLOAD_DIR` ayarından algılanır; genellikle `~/İndirilenler/VideoAvci`
+veya `~/Downloads/VideoAvci` olur. **Ayarlar** sekmesinden değiştirilebilir.
 
 ### Klavye kısayolları
 
@@ -208,14 +210,18 @@ kilitli olabilir.
 
 ## Veri yolları
 
+Ayarlar, veri ve durum yolları XDG ortam değişkenlerine uyar; indirme klasörü
+`user-dirs.dirs` içindeki `XDG_DOWNLOAD_DIR` ayarından alınır. Parantez içinde
+varsayılan değerler gösterilmiştir.
+
 | Amaç | Yol |
 | --- | --- |
-| Ayarlar | `~/.config/videoavci/config.json` |
-| Kuyruk | `~/.local/share/videoavci/queue.json` |
-| Yakalananlar | `~/.local/share/videoavci/captures.json` |
-| Parça dosyaları | `~/.local/share/videoavci/parts/` |
-| Günlükler | `~/.local/state/videoavci/logs/app.log` |
-| Varsayılan indirmeler | `~/İndirilenler/VideoAvci` |
+| Ayarlar | `$XDG_CONFIG_HOME/videoavci/config.json` (`~/.config/...`) |
+| Kuyruk | `$XDG_DATA_HOME/videoavci/queue.json` (`~/.local/share/...`) |
+| Yakalananlar | `$XDG_DATA_HOME/videoavci/captures.json` (`~/.local/share/...`) |
+| Parça dosyaları | `$XDG_DATA_HOME/videoavci/parts/` (`~/.local/share/...`) |
+| Günlükler | `$XDG_STATE_HOME/videoavci/logs/app.log` (`~/.local/state/...`) |
+| Varsayılan indirmeler | `XDG_DOWNLOAD_DIR/VideoAvci` (`~/İndirilenler/...` veya `~/Downloads/...`) |
 
 ## Sorun giderme
 

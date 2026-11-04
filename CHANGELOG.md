@@ -1,5 +1,57 @@
 # Sürüm Notları
 
+## 1.11.2 — 2026-11-05
+
+### Yapılandırma ve kalıcılık
+
+- **XDG uyumlu yollar:** Ayarlar, kuyruk, yakalananlar, parça dosyaları ve
+  günlükler artık `XDG_CONFIG_HOME`, `XDG_DATA_HOME` ve `XDG_STATE_HOME`
+  değişkenlerine uyar; değişken yoksa eski `~/.config`, `~/.local/share` ve
+  `~/.local/state` yolları kullanılır.
+- **İndirilenler klasörü:** `user-dirs.dirs` içindeki `XDG_DOWNLOAD_DIR`
+  algılanır; yoksa `~/Downloads` ve `~/İndirilenler` sırasıyla denenir.
+  Varsayılan `VideoAvci` dizini yalnızca gerçekten kullanılacağı zaman
+  oluşturulur.
+- **Ayar doğrulama:** Bozuk JSON, yanlış türler, aralık dışı değerler ve
+  `1e999` gibi sonsuz sayılar uygulamayı çökertmez. `Config.update()` değerleri
+  kaydetmeden önce normalize eder.
+- **Görev/yakalama yükleme:** Eski veya bozuk kuyruk kayıtlarındaki sayısal
+  alanlar, bilinmeyen durum/kalite değerleri ve `tab_id=0` güvenli biçimde
+  işlenir.
+
+### İndirme ve yakalama
+
+- **Dosya adı düzeltmesi:** `.php`, `.aspx` veya `.bin` gibi medya dışı
+  uzantılar MIME türüne göre değiştirilir; MIME bilinmiyorsa makul bir medya
+  uzantısı seçilir.
+- **Oynatma listesi:** Yalnızca bilinen yol ve sorgu kalıpları liste olarak
+  algılanır. yt-dlp'nin döndürdüğü çıplak YouTube kimlikleri geçerli izleme
+  adreslerine çevrilir; doğrulanamayan kimlikler atlanır.
+- **Ses/video birleştirme:** `sadece ses` kalitesindeki HLS/DASH görevleri
+  gereksiz ses akışı indirip birleştirmeye çalışmaz. DRM korumalı yakalamalar
+  ses/ortak akış adayı olarak kullanılmaz.
+- **Pano algılama:** Sabit site listesi yerine tüm geçerli HTTP(S) adresleri
+  kabul edilir.
+- **Ses çıkarma:** `ffmpeg` kurulu değilse işlem başlamadan yerelleştirilmiş
+  bir hata gösterilir.
+
+### Tarayıcı eklentisi
+
+- Bekleyen yakalamaların yeniden gönderimi, uygulamada yakalama duraklatılmışsa
+  atlanır ve sıra korunur.
+- Ağ yakalama `object` ve `sub_frame` isteklerini de kapsar.
+- Chrome ve Firefox varlıkları eşitlendi; manifestler yalnızca tarayıcıya özgü
+  alanlarda farklıdır. Eklenti sürümü `1.2.2` oldu.
+
+### Testler
+
+- XDG yolları, bozuk ayar/kuyruk verileri, dosya adı yedeği, oynatma listesi
+  algılama, ses/video birleştirme kararı ve eklenti duraklatma davranışı için
+  testler eklendi. Toplam test sayısı 148'e çıktı.
+
+> **Test durumu:** Bu sürüm manuel/GUI ve gerçek ağ indirme testinden
+> geçirilmedi. Yalnızca otomatik birim testleri (148/148) başarıyla tamamlandı.
+
 ## 1.11.1 — 2026-11-04
 
 ### Kurulum

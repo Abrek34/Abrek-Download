@@ -289,6 +289,7 @@
   "toast.audio_exists": "MP3 already exists.",
   "toast.audio_done": "MP3 created: {name}",
   "toast.audio_failed": "Audio extraction failed: {error}",
+  "toast.audio_no_ffmpeg": "ffmpeg is required to extract audio but is not installed.",
   "toast.file_missing_warn": "File not found.",
   "notify.download_complete": "Download complete",
   "notify.download_failed": "Download failed",

@@ -27,6 +27,7 @@ from core.utils import (
     is_transient_error,
     is_youtube_url,
     load_json,
+    looks_like_playlist_url,
     normalize_url,
     parse_eta_text,
     parse_number,
@@ -77,6 +78,23 @@ class UrlTests(unittest.TestCase):
         self.assertFalse(is_youtube_url("https://notyoutube.com/watch?v=abc"))
         self.assertFalse(is_youtube_url("https://example.com/youtube.com"))
 
+    def test_playlist_url_detection(self):
+        for url in (
+            "https://www.youtube.com/watch?v=abc&list=PL123",
+            "https://soundcloud.com/artist/sets/album",
+            "https://vimeo.com/album/123",
+            "https://example.com/playlist/123",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(looks_like_playlist_url(url))
+        for url in (
+            "https://example.com/article/what-is-a-playlist",
+            "https://example.com/playlist-tips",
+            "https://example.com/watch?v=abc",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(looks_like_playlist_url(url))
+
     def test_first_url_argument(self):
         self.assertEqual(
             first_url_argument(["--verbose", "https://x.test/a.mp4"]),
@@ -101,6 +119,24 @@ class UrlTests(unittest.TestCase):
         self.assertEqual(
             filename_from_url("https://x.test/audio.php", content_type="audio/mpeg"),
             "audio.mp3",
+        )
+        # MIME bilgisi yoksa da medya dışı uzantı dosya adına yazılmamalı.
+        self.assertEqual(
+            filename_from_url("https://x.test/download.php"),
+            "download.mp4",
+        )
+        self.assertEqual(
+            filename_from_url("https://x.test/file.bin", content_type="video/webm"),
+            "file.webm",
+        )
+        # mimetypes'in .bin/.jpe gibi önerileri medya uzantısı sayılmaz.
+        self.assertEqual(
+            filename_from_url("https://x.test/stream", content_type="application/octet-stream"),
+            "stream.mp4",
+        )
+        self.assertEqual(
+            filename_from_url("https://x.test/master.m3u8", content_type="application/vnd.apple.mpegurl"),
+            "master.m3u8",
         )
 
     def test_sanitize_filename(self):

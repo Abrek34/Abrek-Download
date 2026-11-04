@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import tkinter as tk
-from pathlib import Path
 from tkinter import ttk
+
+from core.config import CONFIG_FILE
 
 # ------------------------------------------------------------------ paletler
 DARK = {
@@ -69,8 +70,7 @@ def _selected_theme() -> str:
     if name in {"dark", "light"}:
         return name
     try:
-        config_path = Path.home() / ".config" / "videoavci" / "config.json"
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             value = str(data.get("theme", "") or "").strip().lower()
             if value in {"dark", "light"}:

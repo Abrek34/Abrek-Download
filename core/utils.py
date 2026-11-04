@@ -13,7 +13,7 @@ import unicodedata
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .errors import is_transient
 
@@ -29,6 +29,12 @@ MEDIA_EXTENSIONS = {
 }
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"}
 MANIFEST_EXTENSIONS = {".m3u8", ".mpd"}
+KNOWN_MEDIA_EXTENSIONS = MEDIA_EXTENSIONS | AUDIO_EXTENSIONS | MANIFEST_EXTENSIONS
+_PLAYLIST_PATH = re.compile(
+    r"/(?:playlists?|albums?|sets?|showcases?|series)(?:/|$)",
+    re.IGNORECASE,
+)
+_PLAYLIST_QUERY_KEYS = {"list", "playlist", "playlist_id", "playlistid"}
 
 MIME_EXTENSION = {
     "video/mp4": ".mp4",
@@ -177,6 +183,23 @@ def is_media_url(url: str) -> bool:
     return url_extension(url) in MEDIA_EXTENSIONS | AUDIO_EXTENSIONS
 
 
+def looks_like_playlist_url(url: str) -> bool:
+    """URL'nin bir oynatma listesi/albüm sayfası olma ihtimalini söyler.
+
+    Eski kontrol URL'de herhangi bir yerde ``playlist`` kelimesini arıyordu;
+    bu, "playlist nasıl yapılır" gibi sayfalarda gereksiz yere 60 saniyelik
+    yt-dlp sorgusu başlatıyordu. Burada yalnızca bilinen yol parçaları ve
+    sorgu anahtarları dikkate alınır.
+    """
+    try:
+        parsed = urlparse(url)
+    except (TypeError, ValueError):
+        return False
+    if any(key in parse_qs(parsed.query) for key in _PLAYLIST_QUERY_KEYS):
+        return True
+    return bool(_PLAYLIST_PATH.search(parsed.path or ""))
+
+
 def guess_kind(url: str, content_type: str | None = None) -> str:
     ct = (content_type or "").lower()
     ext = url_extension(url)
@@ -241,14 +264,19 @@ def filename_from_url(
     ext = os.path.splitext(name)[1].lower()
     mime = (content_type or "").split(";")[0].strip().lower()
     guessed = MIME_EXTENSION.get(mime) or mimetypes.guess_extension(mime) or ""
+    guessed = guessed.lower()
+    if guessed not in KNOWN_MEDIA_EXTENSIONS:
+        # application/octet-stream için mimetypes'in önerdiği .bin gibi
+        # uzantılar video dosyasına yazılmasın.
+        guessed = ""
     # URL yolunda .php, .aspx gibi medya olmayan bir uzantı varsa MIME türünden
     # doğru uzantıyı seç. Örn. video.php + video/mp4 -> video.mp4
-    if ext and ext not in MEDIA_EXTENSIONS | AUDIO_EXTENSIONS | MANIFEST_EXTENSIONS and guessed:
+    if ext and ext not in KNOWN_MEDIA_EXTENSIONS:
         ext = guessed
     if not ext:
         ext = guessed
     if not ext:
-        # URL uzantısı yoksa makul bir varsayılan seç.
+        # URL uzantısı yoksa veya medya dışı bir uzantıysa makul bir varsayılan seç.
         if mime.startswith("audio/"):
             ext = ".mp3"
         else:

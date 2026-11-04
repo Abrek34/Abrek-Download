@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+from .config import CONFIG_FILE
+
 _AVAILABLE = {"tr": "Türkçe", "en": "English"}
 
 
@@ -14,8 +16,7 @@ def _config_language() -> str:
     if lang in _AVAILABLE:
         return lang
     try:
-        path = Path.home() / ".config" / "videoavci" / "config.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             value = str(data.get("language", "") or "").strip().lower()
             if value in _AVAILABLE:

@@ -27,6 +27,7 @@ from .utils import (
     USER_AGENT,
     clean_error,
     human_duration,
+    is_http_url,
     is_youtube_url,
     parse_eta_text,
     parse_number,
@@ -104,6 +105,35 @@ def ytdlp_version() -> str:
         return "bilinmiyor"
 
 
+def playlist_entry_url(data: dict, entry: dict) -> str:
+    """Oynatma listesi girdisinden geçerli bir video sayfası URL'si üretir.
+
+    Bazı yt-dlp çıktılarında ``url`` alanı yalnızca video kimliğidir. Bu
+    değeri doğrudan kuyruğa eklemek ``https://<kimlik>`` gibi geçersiz bir
+    görev oluşturur. Yalnızca açık http(s) adreslerini veya YouTube
+    kimliklerini kabul et.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    for key in ("webpage_url", "url"):
+        value = entry.get(key)
+        if isinstance(value, str) and is_http_url(value.strip()):
+            return value.strip()
+
+    entry_id = str(entry.get("id") or "").strip()
+    if not entry_id:
+        return ""
+    markers = " ".join(
+        str(entry.get(key) or "") for key in ("ie_key", "extractor_key", "extractor")
+    )
+    markers += " " + " ".join(
+        str(data.get(key) or "") for key in ("extractor_key", "extractor")
+    )
+    if "youtube" in markers.lower():
+        return f"https://www.youtube.com/watch?v={entry_id}"
+    return ""
+
+
 def extract_playlist_info(url: str, cookies_browser: str = "none", referer: str = "") -> dict | None:
     """Verilen URL'nin oynatma listesi olup olmadığını ve içindeki videoları döner."""
     cmd = ytdlp_base_command() + [
@@ -138,15 +168,17 @@ def extract_playlist_info(url: str, cookies_browser: str = "none", referer: str 
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
-                item_url = entry.get("url") or entry.get("webpage_url") or ""
-                if not item_url and entry.get("id"):
-                    item_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                item_url = playlist_entry_url(data, entry)
                 if item_url:
+                    try:
+                        duration = max(0, int(entry.get("duration") or 0))
+                    except (TypeError, ValueError):
+                        duration = 0
                     items.append({
                         "id": str(entry.get("id") or ""),
                         "title": str(entry.get("title") or "Video").strip(),
                         "url": item_url,
-                        "duration": int(entry.get("duration") or 0),
+                        "duration": duration,
                     })
             if len(items) > 1:
                 return {

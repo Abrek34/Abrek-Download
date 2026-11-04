@@ -11,7 +11,36 @@ from types import SimpleNamespace
 
 os.environ["ABREK_LANG"] = "tr"
 
-from core.ytdlp import YtDlpDownloader
+from core.ytdlp import YtDlpDownloader, playlist_entry_url
+
+
+class PlaylistEntryUrlTests(unittest.TestCase):
+    def test_prefers_full_webpage_url(self):
+        self.assertEqual(
+            playlist_entry_url(
+                {},
+                {
+                    "url": "https://www.youtube.com/watch?v=abc",
+                    "webpage_url": "https://www.youtube.com/watch?v=abc",
+                },
+            ),
+            "https://www.youtube.com/watch?v=abc",
+        )
+
+    def test_builds_youtube_url_from_bare_id(self):
+        self.assertEqual(
+            playlist_entry_url(
+                {"extractor_key": "Youtube"},
+                {"id": "abc123", "url": "abc123"},
+            ),
+            "https://www.youtube.com/watch?v=abc123",
+        )
+
+    def test_rejects_unknown_bare_id(self):
+        self.assertEqual(
+            playlist_entry_url({}, {"id": "abc123", "url": "abc123"}),
+            "",
+        )
 
 
 class FinalPathTests(unittest.TestCase):

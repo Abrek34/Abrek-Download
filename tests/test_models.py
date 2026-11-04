@@ -60,6 +60,48 @@ class DownloadTaskTests(unittest.TestCase):
         self.assertEqual(restored.retry_count, 2)
         self.assertEqual(restored.available_at, 1234.5)
 
+    def test_from_dict_coerces_corrupt_values(self):
+        restored = DownloadTask.from_dict(
+            {
+                "id": "",
+                "url": " https://x.test/a.mp4 ",
+                "title": None,
+                "status": 123,
+                "kind": "bilinmeyen",
+                "quality": "8k",
+                "progress": "142.5",
+                "speed": "-3",
+                "eta": "12.9",
+                "downloaded": "100",
+                "total": -5,
+                "auto_resume": "false",
+                "analyzed": "yes",
+                "connections": "99",
+                "retry_count": "3",
+                "available_at": "12.5",
+                "created_at": "bozuk",
+                "updated_at": None,
+            }
+        )
+        self.assertTrue(restored.id)
+        self.assertEqual(restored.url, "https://x.test/a.mp4")
+        self.assertEqual(restored.title, "")
+        self.assertEqual(restored.status, "paused")
+        self.assertEqual(restored.kind, "auto")
+        self.assertEqual(restored.quality, "best")
+        self.assertEqual(restored.progress, 100.0)
+        self.assertEqual(restored.speed, 0.0)
+        self.assertEqual(restored.eta, 12)
+        self.assertEqual(restored.downloaded, 100)
+        self.assertEqual(restored.total, 0)
+        self.assertFalse(restored.auto_resume)
+        self.assertTrue(restored.analyzed)
+        self.assertEqual(restored.connections, 8)
+        self.assertEqual(restored.retry_count, 3)
+        self.assertEqual(restored.available_at, 12.5)
+        self.assertGreater(restored.created_at, 0)
+        self.assertGreater(restored.updated_at, 0)
+
     def test_status_and_quality_helpers(self):
         self.assertEqual(status_label("queued"), "Sırada")
         self.assertEqual(status_label("bilinmeyen"), "bilinmeyen")
@@ -96,6 +138,52 @@ class CaptureTests(unittest.TestCase):
         capture = Capture(url="https://x.test/video.mp4", probed_at=987.5)
         restored = Capture.from_dict(capture.to_dict())
         self.assertEqual(restored.probed_at, 987.5)
+
+    def test_from_dict_coerces_corrupt_values(self):
+        restored = Capture.from_dict(
+            {
+                "id": "",
+                "url": " https://x.test/video.php ",
+                "size": "12.9",
+                "kind": "bilinmeyen",
+                "media_kind": "bilinmeyen",
+                "tab_id": "-4",
+                "drm": "false",
+                "created_at": "bozuk",
+                "probed_at": "-2",
+            }
+        )
+        self.assertTrue(restored.id)
+        self.assertEqual(restored.url, "https://x.test/video.php")
+        self.assertEqual(restored.size, 12)
+        self.assertEqual(restored.kind, "direct")
+        self.assertEqual(restored.tab_id, -1)
+        self.assertFalse(restored.drm)
+        self.assertGreater(restored.created_at, 0)
+        self.assertEqual(restored.probed_at, 0.0)
+
+    def test_make_capture_ignores_malformed_numbers(self):
+        capture = make_capture(
+            {
+                "url": "https://x.test/video.mp4",
+                "size": "bilinmiyor",
+                "tab_id": "abc",
+                "drm": "false",
+            }
+        )
+        self.assertEqual(capture.size, 0)
+        self.assertEqual(capture.tab_id, -1)
+        self.assertFalse(capture.drm)
+
+    def test_make_capture_accepts_tab_id_zero(self):
+        capture = make_capture(
+            {
+                "url": "https://x.test/video.mp4",
+                "tab_id": 0,
+                "tabId": 99,
+            }
+        )
+        self.assertEqual(capture.tab_id, 0)
 
 
 class YoutubeArgsTests(unittest.TestCase):

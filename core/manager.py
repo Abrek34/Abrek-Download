@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin
@@ -1395,6 +1395,19 @@ class DownloadManager:
                 video = True
         return audio, video
 
+    @staticmethod
+    def _needs_av_merge(task: "DownloadTask") -> bool:
+        """Görev için ayrı ses akışı indirip birleştirmek gerekiyor mu?
+
+        Kullanıcı "sadece ses" kalitesini seçtiyse yt-dlp zaten MP3 üretir;
+        ayrıca ses akışı indirmek ve birleştirmeye çalışmak gereksizdir.
+        """
+        return (
+            task.kind in {"hls", "dash"}
+            and task.quality != "audio"
+            and not task.audio_url
+        )
+
     def _find_matching_audio(self, task: "DownloadTask") -> str:
         """Aynı sayfadaki ses-only HLS/DASH yakalamasını bulur.
 
@@ -1410,6 +1423,7 @@ class DownloadManager:
                 for capture in self.captures
                 if capture.page_url == task.page_url
                 and capture.kind in {"hls", "dash"}
+                and not getattr(capture, "drm", False)
                 and capture.url != task.url
             ]
         candidates.sort(key=lambda capture: capture.media_kind != "audio")
@@ -1431,6 +1445,7 @@ class DownloadManager:
                 for capture in self.captures
                 if capture.page_url == task.page_url
                 and capture.kind in {"hls", "dash"}
+                and not getattr(capture, "drm", False)
                 and capture.url != task.url
             ]
         for capture in candidates:
@@ -1555,7 +1570,7 @@ class DownloadManager:
             # başka bir HLS yakalamasını bul ve tek dosyada birleştir.
             # yt-dlp audio_ext/video_ext reliably ayrılamadığı için, sayfa URL'si
             # ve URL farklılığıyla eşleşen başka bir hls yakalama yeterli.
-            if mode != "direct" and task.kind in ("hls", "dash") and not task.audio_url:
+            if mode != "direct" and self._needs_av_merge(task):
                 try:
                     audio_url = self._find_matching_audio(task)
                     if audio_url:

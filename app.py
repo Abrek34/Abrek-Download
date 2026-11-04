@@ -41,7 +41,13 @@ from core.config import (
 from core.manager import DownloadManager
 from core.server import ApiServer
 from core.i18n import t
-from core.utils import first_url_argument, human_speed, open_in_file_manager, open_path
+from core.utils import (
+    first_url_argument,
+    human_speed,
+    is_http_url,
+    open_in_file_manager,
+    open_path,
+)
 from ui import theme
 from ui.captures import CapturesPage
 from ui.downloads import DownloadsPage
@@ -49,7 +55,6 @@ from ui.extension import ExtensionPage
 from ui.settings import SettingsPage
 from ui.theme import (
     ACCENT,
-    ACCENT_SOFT,
     BG,
     BG_SOFT,
     BORDER,
@@ -555,17 +560,13 @@ class VideoAvciApp(tk.Tk):
                     # Aynı video bağlantısı panoya tekrar geldiğinde de
                     # algılanabilmesi için son içeriği her durumda güncelle.
                     self._last_clipboard = text
-                    if text.startswith(("http://", "https://")):
-                        video_patterns = (
-                            "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
-                            "twitter.com", "x.com", "tiktok.com", "instagram.com",
-                            "facebook.com", "fb.watch", "twitch.tv", "reddit.com",
-                            ".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".mp3",
-                        )
-                        if any(pattern in text.lower() for pattern in video_patterns):
-                            self.pages["downloads"].url_entry.set_value(text)
-                            self.show_page("downloads")
-                            self.toast(t("clipboard.detected_toast"), "info")
+                    # yt-dlp birçok siteyi desteklediği için sabit bir alan
+                    # listesiyle sınırlamak yerine tüm http(s) bağlantılarını
+                    # aday olarak kabul et. Bu özellik isteğe bağlıdır.
+                    if is_http_url(text):
+                        self.pages["downloads"].url_entry.set_value(text)
+                        self.show_page("downloads")
+                        self.toast(t("clipboard.detected_toast"), "info")
             except Exception:
                 pass
         self.after(2000, self._poll_clipboard)
@@ -809,6 +810,9 @@ class VideoAvciApp(tk.Tk):
         task = self.manager.get_task(task_id)
         if task is None or not task.filepath or not Path(task.filepath).exists():
             self.toast(t("toast.file_missing_warn"), "warning")
+            return
+        if not shutil.which("ffmpeg"):
+            self.toast(t("toast.audio_no_ffmpeg"), "error")
             return
         src = Path(task.filepath)
         dst = src.with_suffix(".mp3")

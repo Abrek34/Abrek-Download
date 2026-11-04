@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -12,6 +12,46 @@ from .utils import AUDIO_EXTENSIONS, MEDIA_EXTENSIONS, hostname, now, url_extens
 
 ACTIVE_STATUSES = {"starting", "analyzing", "downloading", "processing", "pausing", "canceling"}
 FINISHED_STATUSES = {"completed", "error", "canceled"}
+ALL_STATUSES = ACTIVE_STATUSES | FINISHED_STATUSES | {"queued", "paused"}
+TASK_KINDS = {"auto", "page", "direct", "hls", "dash"}
+CAPTURE_KINDS = {"direct", "hls", "dash", "page"}
+MEDIA_KINDS = {"", "audio", "video", "av", "manifest"}
+
+
+def _as_text(value: Any, default: str = "") -> str:
+    return value.strip() if isinstance(value, str) else default
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _as_int(value: Any, default: int) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on", "evet"}:
+            return True
+        if text in {"0", "false", "no", "off", "hayır", "hayir", ""}:
+            return False
+    return default
+
 
 STATUS_LABELS = {
     "queued": "Sırada",
@@ -124,10 +164,46 @@ class DownloadTask:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DownloadTask":
         allowed = set(cls.__dataclass_fields__.keys())
-        clean = {key: value for key, value in (data or {}).items() if key in allowed}
+        source = data if isinstance(data, dict) else {}
+        clean = {key: value for key, value in source.items() if key in allowed}
         task = cls(**clean)
-        if not task.id:
-            task.id = uuid.uuid4().hex[:12]
+
+        task.id = _as_text(task.id).strip() or uuid.uuid4().hex[:12]
+        task.url = _as_text(task.url).strip()
+        task.audio_url = _as_text(task.audio_url).strip()
+        task.title = _as_text(task.title)
+        task.page_url = _as_text(task.page_url).strip()
+        task.kind = _as_text(task.kind, "auto").strip().lower()
+        if task.kind not in TASK_KINDS:
+            task.kind = "auto"
+        task.quality = _as_text(task.quality, "best").strip().lower()
+        if task.quality not in QUALITY_LABEL_KEYS:
+            task.quality = "best"
+        task.status = _as_text(task.status, "paused").strip().lower()
+        if task.status not in ALL_STATUSES:
+            # Bilinmeyen durumdaki görevi otomatik başlatmak yerine duraklat.
+            task.status = "paused"
+        task.progress = min(100.0, max(0.0, _as_float(task.progress, 0.0)))
+        task.speed = max(0.0, _as_float(task.speed, 0.0))
+        task.eta = max(0, _as_int(task.eta, 0))
+        task.downloaded = max(0, _as_int(task.downloaded, 0))
+        task.total = max(0, _as_int(task.total, 0))
+        task.error = _as_text(task.error)
+        task.filepath = _as_text(task.filepath)
+        task.extractor = _as_text(task.extractor)
+        task.duration = max(0, _as_int(task.duration, 0))
+        task.thumbnail = _as_text(task.thumbnail)
+        task.format_note = _as_text(task.format_note)
+        task.referer = _as_text(task.referer).strip()
+        task.created_at = max(0.0, _as_float(task.created_at, now()))
+        task.updated_at = max(0.0, _as_float(task.updated_at, task.created_at or now()))
+        task.auto_resume = _as_bool(task.auto_resume, True)
+        task.connections = max(0, min(8, _as_int(task.connections, 0)))
+        task.analyzed = _as_bool(task.analyzed, False)
+        task.log_tail = _as_text(task.log_tail)[-8000:]
+        task.detail = _as_text(task.detail)
+        task.retry_count = max(0, _as_int(task.retry_count, 0))
+        task.available_at = max(0.0, _as_float(task.available_at, 0.0))
         return task
 
     def snapshot(self) -> dict[str, Any]:
@@ -218,29 +294,64 @@ class Capture:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Capture":
         allowed = set(cls.__dataclass_fields__.keys())
-        clean = {key: value for key, value in (data or {}).items() if key in allowed}
+        source = data if isinstance(data, dict) else {}
+        clean = {key: value for key, value in source.items() if key in allowed}
         capture = cls(**clean)
-        if not capture.id:
-            capture.id = uuid.uuid4().hex[:12]
+
+        capture.id = _as_text(capture.id).strip() or uuid.uuid4().hex[:12]
+        capture.url = _as_text(capture.url).strip()
+        capture.page_url = _as_text(capture.page_url).strip()
+        capture.page_title = _as_text(capture.page_title)
+        capture.title = _as_text(capture.title)
+        capture.content_type = _as_text(capture.content_type).strip()
+        capture.size = max(0, _as_int(capture.size, 0))
+        capture.kind = _as_text(capture.kind, "direct").strip().lower()
+        if capture.kind not in CAPTURE_KINDS:
+            capture.kind = "direct"
+        capture.media_kind = _as_text(capture.media_kind).strip().lower()
+        if capture.media_kind not in MEDIA_KINDS:
+            capture.media_kind = ""
+        if not capture.media_kind:
+            capture.media_kind = capture._guess_media_kind()
+        capture.media_info = _as_text(capture.media_info).strip()
+        capture.referer = _as_text(capture.referer).strip()
+        capture.tab_id = _as_int(capture.tab_id, -1)
+        if capture.tab_id < -1:
+            capture.tab_id = -1
+        capture.drm = _as_bool(capture.drm, False)
+        capture.created_at = max(0.0, _as_float(capture.created_at, now()))
+        capture.probed_at = max(0.0, _as_float(capture.probed_at, 0.0))
+        if not capture.title:
+            capture.title = capture.page_title
+        if not capture.referer:
+            capture.referer = capture.page_url
         return capture
 
 
 def make_capture(payload: dict[str, Any]) -> Capture:
+    payload = payload if isinstance(payload, dict) else {}
+    raw_tab_id = payload.get("tab_id")
+    if raw_tab_id is None:
+        raw_tab_id = payload.get("tabId")
     capture = Capture(
-        url=str(payload.get("url") or "").strip(),
-        page_url=str(payload.get("page_url") or payload.get("pageUrl") or "").strip(),
-        page_title=str(payload.get("page_title") or payload.get("pageTitle") or "").strip(),
-        title=str(payload.get("title") or "").strip(),
-        content_type=str(payload.get("content_type") or payload.get("contentType") or "").strip(),
-        size=int(payload.get("size") or 0),
-        kind=str(payload.get("kind") or "direct").strip().lower(),
+        url=_as_text(payload.get("url") or "").strip(),
+        page_url=_as_text(payload.get("page_url") or payload.get("pageUrl") or "").strip(),
+        page_title=_as_text(payload.get("page_title") or payload.get("pageTitle") or "").strip(),
+        title=_as_text(payload.get("title") or "").strip(),
+        content_type=_as_text(
+            payload.get("content_type") or payload.get("contentType") or ""
+        ).strip(),
+        size=max(0, _as_int(payload.get("size"), 0)),
+        kind=_as_text(payload.get("kind") or "direct", "direct").strip().lower(),
         media_kind="",
-        referer=str(payload.get("referer") or "").strip(),
-        tab_id=int(payload.get("tab_id") or payload.get("tabId") or -1),
-        drm=bool(payload.get("drm") or False),
+        referer=_as_text(payload.get("referer") or "").strip(),
+        tab_id=_as_int(raw_tab_id, -1),
+        drm=_as_bool(payload.get("drm"), False),
     )
-    if capture.kind not in {"direct", "hls", "dash", "page"}:
+    if capture.kind not in CAPTURE_KINDS:
         capture.kind = "direct"
+    if capture.tab_id < -1:
+        capture.tab_id = -1
     capture.media_kind = capture._guess_media_kind()
     if not capture.title:
         capture.title = capture.page_title
