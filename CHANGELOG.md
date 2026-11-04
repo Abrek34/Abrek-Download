@@ -1,5 +1,14 @@
 # Sürüm Notları
 
+## 1.11.1 — 2026-11-04
+
+### Kurulum
+
+- **Otomatik JavaScript çalışma zamanı kurulumu:** deno/node eksikse kurulum
+  arayüzü artık sistem paket yansısına (mirror) güvenmeden kullanıcı düzeyinde
+  `deno` kurar (`~/.deno/bin`, `~/.local/bin` bağlantısı). Kurulum programı
+  eksik bağımlılığı kendisi tamamlar.
+
 ## 1.11.0 — 2026-11-04
 
 ### Hata sınıflandırması

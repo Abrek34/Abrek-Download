@@ -135,6 +135,10 @@ def package_manager() -> str:
 
 
 def _package_names(missing_ffmpeg: bool, missing_tk: bool, missing_js: bool) -> list[str]:
+    # JavaScript çalışma zamanı (deno/node) sistem paket yöneticisi yerine
+    # kullanıcı düzeyinde kurulur; böylece yansılık (mirror) 404 sorunları
+    # kurulumu engellemez.
+    del missing_js
     manager = package_manager()
     names: list[str] = []
     if manager == "pacman":
@@ -142,30 +146,33 @@ def _package_names(missing_ffmpeg: bool, missing_tk: bool, missing_js: bool) -> 
             names.append("ffmpeg")
         if missing_tk:
             names.append("tk")
-        if missing_js:
-            names.append("deno")
     elif manager == "apt-get":
         if missing_ffmpeg:
             names.append("ffmpeg")
         if missing_tk:
             names.append("python3-tk")
-        if missing_js:
-            names.append("nodejs")
     elif manager == "dnf":
         if missing_ffmpeg:
             names.append("ffmpeg")
         if missing_tk:
             names.append("python3-tkinter")
-        if missing_js:
-            names.append("nodejs")
     elif manager == "zypper":
         if missing_ffmpeg:
             names.append("ffmpeg")
         if missing_tk:
             names.append("python3-tk")
-        if missing_js:
-            names.append("nodejs")
     return names
+
+
+def js_runtime_install_command() -> list[str]:
+    """Deno'yu kullanıcı düzeyinde (sudo gerektirmeden) kurar."""
+    return [
+        "bash",
+        "-c",
+        'curl -fsSL https://deno.land/install.sh | sh && '
+        'mkdir -p "$HOME/.local/bin" && '
+        'ln -sf "$HOME/.deno/bin/deno" "$HOME/.local/bin/deno"',
+    ]
 
 
 def system_install_command(packages: list[str]) -> list[str]:
@@ -352,6 +359,7 @@ def detect_all(project_dir: Path = PROJECT_DIR) -> dict:
         missing_js=not js_name,
     )
     command = system_install_command(missing_packages)
+    js_command = js_runtime_install_command() if not js_name else []
 
     return {
         "version": VERSION,
@@ -359,6 +367,7 @@ def detect_all(project_dir: Path = PROJECT_DIR) -> dict:
         "package_manager": package_manager(),
         "missing_system_packages": missing_packages,
         "system_install_command": command,
+        "js_install_command": js_command,
         "app_running": is_app_running(),
         "checks": {key: check.as_dict() for key, check in checks.items()},
     }

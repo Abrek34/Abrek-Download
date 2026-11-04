@@ -28,6 +28,7 @@ from core.installer import (
     detect_json,
     install_script_args,
     is_app_running,
+    js_runtime_install_command,
     launch_command,
     manual_install_command,
 )
@@ -552,10 +553,16 @@ class InstallerApp:
         desktop = self.desktop_var.get() == 1
         prepare = self.prepare_var.get() == 1
         system = self.system_var.get() == 1 and self._system_available
-        if not any((menu, desktop, prepare, system)):
+        js_command = list(self._detect_data.get("js_install_command") or [])
+        if not any((menu, desktop, prepare, system)) and not js_command:
             messagebox.showwarning(tr("msg.nothing_title"), tr("msg.nothing"))
             return
         self._pending_install = (menu, desktop, prepare)
+
+        if js_command:
+            self._log(tr("log.js"), "cmd")
+            self._run(js_command, "js", tr("option.js"))
+            return
 
         if system:
             command = list(self._detect_data.get("system_install_command") or [])
@@ -658,6 +665,27 @@ class InstallerApp:
         self._set_busy(False)
         action = self._action
         self._action = ""
+
+        if action == "js":
+            if code == 0:
+                self._log(tr("log.js_done"), "ok")
+                command = list(self._detect_data.get("system_install_command") or [])
+                menu, desktop, prepare = self._pending_install
+                if command:
+                    self._run(command, "system", tr("option.system"))
+                elif menu or desktop or prepare:
+                    self._run_install_script(menu, desktop, prepare)
+                else:
+                    self.refresh()
+                    messagebox.showinfo(tr("msg.install_done_title"), tr("log.js_done"))
+            else:
+                self._log(tr("log.js_failed"), "error")
+                messagebox.showerror(
+                    tr("msg.failed_title"),
+                    tr("msg.failed", code=code),
+                )
+                self.refresh()
+            return
 
         if action == "system":
             if code == 0:
