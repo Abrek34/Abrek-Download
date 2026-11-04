@@ -1,5 +1,36 @@
 # Sürüm Notları
 
+## 1.11.3 — 2026-11-05
+
+### Ses ve görüntü birlikte indirme
+
+- **Son dosya doğrulaması:** İndirme tamamlandıktan sonra dosya ffprobe ile
+  kontrol edilir. Video görevlerinde ses veya görüntü akışı eksikse görev
+  `completed` yerine `error` durumuna alınır; eksik dosya başarılı sayılmaz.
+- **Doğrudan bağlantılar:** Yalnızca ses içeren dosyalar (MP3, M4A vb.)
+  geçerli kabul edilir; sesi olmayan video dosyaları reddedilir.
+- **HLS/DASH birleştirme:** Video ve ses akışları birleştirilemezse video-only
+  dosya sessizce korunmaz. Önce gerçekten ses+görüntü içeren birleşik akış
+  denenir; böyle bir akış yoksa görev açık bir `merge_failed` hatasıyla
+  sonlandırılır.
+- **Format seçimi:** yt-dlp birleşik yedek formatları artık ses ve görüntü
+  akışlarının ikisini de gerektirir; sesi olmayan video-only biçimlere
+  düşülmesi engellenir. Codec bilgisi bilinmeyen kaynaklar (ör. arşiv
+  siteleri) yine kabul edilir.
+- **Kapak resmi ayrımı:** MP3/M4A kapak resmi içeren dosyalardaki
+  `attached_pic` görüntü akışı video olarak sayılmaz.
+
+### Testler
+
+- Yerel dosya akış sondası, son dosya doğrulaması, birleşik akış arama ve
+  format seçici için yeni birim testleri eklendi.
+- Gerçek ağ smoke testleri çalıştırıldı: doğrudan muxed MP4, archive.org tam
+  film, DASH, HLS ve yalnızca ses. Tüm sonuçlarda beklenen ses+görüntü
+  akışları ffprobe ile doğrulandı; sesi olmayan Big Buck Bunny 1 MB örneği
+  artık hata olarak işaretleniyor.
+- Toplam otomatik test sayısı 167 (167/167 başarılı).
+
+
 ## 1.11.2 — 2026-11-05
 
 ### Yapılandırma ve kalıcılık

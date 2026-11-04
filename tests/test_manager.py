@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
@@ -12,6 +13,7 @@ from unittest import mock
 
 os.environ["ABREK_LANG"] = "tr"
 
+from core.errors import PermanentDownloadError
 from core.manager import (
     DownloadManager,
     auto_retry_delay,
@@ -508,3 +510,161 @@ class ClearQueueTests(unittest.TestCase):
         self.assertIn(active.id, manager.cancel_requested)
         controller.cancel.assert_called_once()
         manager._cleanup_parts.assert_called_once_with(queued.id)
+
+
+class FileStreamProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.manager = DownloadManager.__new__(DownloadManager)
+
+    @staticmethod
+    def payload(*streams):
+        return json.dumps({"streams": list(streams)})
+
+    def probe(self, payload):
+        completed = SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        with (
+            mock.patch("core.manager.shutil.which", return_value="/usr/bin/ffprobe"),
+            mock.patch("core.manager.subprocess.run", return_value=completed),
+        ):
+            return self.manager._probe_file_streams("video.mp4")
+
+    def test_detects_video_and_audio(self):
+        self.assertEqual(
+            self.probe(
+                self.payload(
+                    {"codec_type": "video", "disposition": {"attached_pic": 0}},
+                    {"codec_type": "audio"},
+                )
+            ),
+            (True, True),
+        )
+
+    def test_attached_picture_is_not_video(self):
+        self.assertEqual(
+            self.probe(
+                self.payload(
+                    {"codec_type": "video", "disposition": {"attached_pic": 1}},
+                    {"codec_type": "audio"},
+                )
+            ),
+            (False, True),
+        )
+
+    def test_missing_ffprobe_returns_none(self):
+        with mock.patch("core.manager.shutil.which", return_value=None):
+            self.assertIsNone(self.manager._probe_file_streams("video.mp4"))
+
+    def test_failed_probe_returns_none(self):
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="boom")
+        with (
+            mock.patch("core.manager.shutil.which", return_value="/usr/bin/ffprobe"),
+            mock.patch("core.manager.subprocess.run", return_value=completed),
+        ):
+            self.assertIsNone(self.manager._probe_file_streams("video.mp4"))
+
+
+class FinalMediaValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.manager = DownloadManager.__new__(DownloadManager)
+        self.manager._log_callback = lambda _task_id: (lambda _message: None)
+        self.path = "/tmp/abrek-test-video.mp4"
+
+    @staticmethod
+    def task(kind="page", quality="best", url="https://x.test/video"):
+        return SimpleNamespace(id="task-1", kind=kind, quality=quality, url=url)
+
+    def validate(self, streams, task):
+        with mock.patch.object(
+            DownloadManager,
+            "_probe_file_streams",
+            return_value=streams,
+        ):
+            self.manager._validate_final_media(task, self.path)
+
+    def test_page_video_with_audio_passes(self):
+        self.validate((True, True), self.task())
+
+    def test_page_video_without_audio_fails(self):
+        with self.assertRaises(PermanentDownloadError) as context:
+            self.validate((True, False), self.task())
+        self.assertIn("ses", str(context.exception))
+
+    def test_page_audio_without_video_fails(self):
+        with self.assertRaises(PermanentDownloadError) as context:
+            self.validate((False, True), self.task())
+        self.assertIn("görüntü", str(context.exception))
+
+    def test_audio_quality_accepts_audio_only(self):
+        self.validate((False, True), self.task(quality="audio"))
+
+    def test_audio_quality_rejects_missing_audio(self):
+        with self.assertRaises(PermanentDownloadError):
+            self.validate((True, False), self.task(quality="audio"))
+
+    def test_direct_video_without_audio_fails(self):
+        with self.assertRaises(PermanentDownloadError):
+            self.validate((True, False), self.task(kind="direct"))
+
+    def test_direct_audio_only_is_allowed(self):
+        self.validate(
+            (False, True),
+            self.task(kind="direct", url="https://x.test/song.mp3"),
+        )
+
+    def test_direct_file_without_media_fails(self):
+        with self.assertRaises(PermanentDownloadError):
+            self.validate((False, False), self.task(kind="direct"))
+
+    def test_missing_ffprobe_does_not_block(self):
+        self.validate(None, self.task())
+
+
+class FindCombinedStreamProbeTests(unittest.TestCase):
+    @staticmethod
+    def task():
+        return SimpleNamespace(
+            url="https://cdn.test/video.m3u8",
+            page_url="https://site.test/watch/1",
+        )
+
+    @staticmethod
+    def capture(media_info=""):
+        return SimpleNamespace(
+            url="https://cdn.test/combined.m3u8",
+            page_url="https://site.test/watch/1",
+            kind="hls",
+            drm=False,
+            media_info=media_info,
+        )
+
+    def make_manager(self, capture):
+        return SimpleNamespace(
+            lock=__import__("threading").RLock(),
+            captures=[capture],
+            _probe_av=mock.Mock(return_value=(True, True)),
+        )
+
+    def test_probe_finds_combined_candidate_without_label(self):
+        capture = self.capture()
+        manager = self.make_manager(capture)
+        self.assertEqual(
+            DownloadManager._find_combined_stream(manager, self.task(), probe=True),
+            capture.url,
+        )
+        manager._probe_av.assert_called_once()
+
+    def test_without_probe_does_not_start_ytdlp(self):
+        manager = self.make_manager(self.capture())
+        self.assertEqual(
+            DownloadManager._find_combined_stream(manager, self.task()),
+            "",
+        )
+        manager._probe_av.assert_not_called()
+
+    def test_silent_candidate_is_skipped(self):
+        manager = self.make_manager(self.capture("1080p · sessiz"))
+        self.assertEqual(
+            DownloadManager._find_combined_stream(manager, self.task(), probe=True),
+            "",
+        )
+        manager._probe_av.assert_not_called()

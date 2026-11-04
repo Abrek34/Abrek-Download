@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 os.environ["ABREK_LANG"] = "tr"
 
-from core.ytdlp import YtDlpDownloader, playlist_entry_url
+from core.ytdlp import YtDlpDownloader, build_format_selector, playlist_entry_url
 
 
 class PlaylistEntryUrlTests(unittest.TestCase):
@@ -41,6 +41,23 @@ class PlaylistEntryUrlTests(unittest.TestCase):
             playlist_entry_url({}, {"id": "abc123", "url": "abc123"}),
             "",
         )
+
+
+class FormatSelectorTests(unittest.TestCase):
+    def test_best_requires_audio_for_combined_fallbacks(self):
+        selector = build_format_selector("best")
+        self.assertIn("bv*[ext=mp4]+ba[ext=m4a]", selector)
+        self.assertIn("b[ext=mp4][acodec!=?none][vcodec!=?none]", selector)
+        self.assertIn("b[acodec!=?none][vcodec!=?none]", selector)
+
+    def test_quality_selector_keeps_height_limit_and_audio(self):
+        selector = build_format_selector("480")
+        self.assertIn("height<=480", selector)
+        self.assertIn("acodec!=?none", selector)
+        self.assertIn("vcodec!=?none", selector)
+
+    def test_audio_selector_is_audio_only(self):
+        self.assertEqual(build_format_selector("audio"), "ba[ext=m4a]/ba/b")
 
 
 class FinalPathTests(unittest.TestCase):

@@ -56,15 +56,23 @@ QUALITY_HEIGHTS = {"2160": 2160, "1440": 1440, "1080": 1080, "720": 720, "480": 
 def build_format_selector(quality: str) -> str:
     if quality == "audio":
         return "ba[ext=m4a]/ba/b"
+    # Birleşik (ses+görüntü) yedeklerde iki akışı da zorunlu tut. Aksi halde
+    # yt-dlp'nin ``best`` seçicisi sesi olmayan bir video-only biçime düşebilir.
+    best = (
+        "bv*[ext=mp4]+ba[ext=m4a]/"
+        "b[ext=mp4][acodec!=?none][vcodec!=?none]/"
+        "bv*+ba/b[acodec!=?none][vcodec!=?none]"
+    )
     if quality == "best":
-        return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
+        return best
     height = QUALITY_HEIGHTS.get(quality)
     if not height:
-        return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
+        return best
     return (
         f"bv*[height<={height}][ext=mp4]+ba[ext=m4a]/"
-        f"b[height<={height}][ext=mp4]/"
-        f"bv*[height<={height}]+ba/b[height<={height}]"
+        f"b[height<={height}][ext=mp4][acodec!=?none][vcodec!=?none]/"
+        f"bv*[height<={height}]+ba/"
+        f"b[height<={height}][acodec!=?none][vcodec!=?none]"
     )
 
 

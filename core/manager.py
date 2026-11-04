@@ -35,7 +35,7 @@ from .direct import (
     DownloadPaused as DirectPaused,
     NotDirectError,
 )
-from .errors import DownloadError
+from .errors import DownloadError, PermanentDownloadError
 from .i18n import t
 from .models import (
     ACTIVE_STATUSES,
@@ -714,6 +714,54 @@ class DownloadManager:
             heights=(height,) if height else (),
             source="ffprobe",
         )
+
+    @staticmethod
+    def _probe_file_streams(path: str) -> tuple[bool, bool] | None:
+        """Yerel dosyadaki gerçek ses/görüntü akışlarını ffprobe ile döndürür.
+
+        Kapak resmi gibi ``attached_pic`` görüntü akışları video sayılmaz.
+        ffprobe yoksa veya dosya okunamazsa ``None`` döner.
+        """
+        if not path or not shutil.which("ffprobe"):
+            return None
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=codec_type,disposition",
+                    "-of",
+                    "json",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        try:
+            info = json.loads(result.stdout)
+        except (TypeError, ValueError):
+            return None
+        streams = info.get("streams") or []
+        has_video = False
+        has_audio = False
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            codec_type = str(stream.get("codec_type") or "").lower()
+            if codec_type == "audio":
+                has_audio = True
+            elif codec_type == "video":
+                disposition = stream.get("disposition") or {}
+                if not bool(disposition.get("attached_pic")):
+                    has_video = True
+        return has_video, has_audio
 
     @staticmethod
     def _probe_with_ytdlp(url: str, referer: str) -> MediaProbe | None:
@@ -1435,8 +1483,13 @@ class DownloadManager:
                 return capture.url
         return ""
 
-    def _find_combined_stream(self, task: "DownloadTask") -> str:
-        """Ses-only akış bulunamazsa aynı sayfadaki sesli/birleşik akışı döner."""
+    def _find_combined_stream(self, task: "DownloadTask", probe: bool = False) -> str:
+        """Ses-only akış bulunamazsa aynı sayfadaki sesli/birleşik akışı döner.
+
+        ``probe`` yalnızca birleştirme başarısız olduğunda kullanılır; bu
+        durumda medya etiketi güvenilir değilse adayların gerçekten iki akış
+        içerdiği yt-dlp ile sınırlı sayıda denenir.
+        """
         if not task.page_url:
             return ""
         with self.lock:
@@ -1448,7 +1501,7 @@ class DownloadManager:
                 and not getattr(capture, "drm", False)
                 and capture.url != task.url
             ]
-        for capture in candidates:
+        for capture in (candidates[:3] if probe else candidates):
             info = (capture.media_info or "").lower()
             # "1080p · sesli" gibi hem çözünürlük hem ses içeren kayıtlar
             # birleşik akıştır; sadece "sesli" olanlar ses-only'dir.
@@ -1456,6 +1509,13 @@ class DownloadManager:
                 continue
             if "sesli" in info and any(char.isdigit() for char in info):
                 return capture.url
+            if probe:
+                audio, video = self._probe_av(
+                    capture.url,
+                    task.page_url or capture.page_url,
+                )
+                if audio and video:
+                    return capture.url
         return ""
 
     def _download_one(
@@ -1487,6 +1547,57 @@ class DownloadManager:
         finally:
             # Hata olsa da URL'yi orijinaline geri yükle.
             task.url = orig_url
+
+    def _validate_final_media(self, task: DownloadTask, path: str) -> None:
+        """Tamamlanan dosyada beklenen ses/görüntü akışlarını doğrular.
+
+        Video indirmelerinde iki akış da yoksa görev tamamlanmış sayılmaz;
+        böylece "sesi olmayan video" veya "görüntüsü olmayan ses" dosyası
+        sessizce başarılı görünmez. Doğrudan ses dosyaları (ör. MP3) için
+        yalnızca ses akışı yeterlidir.
+        """
+        streams = self._probe_file_streams(path)
+        if streams is None:
+            # ffprobe yoksa indirmeyi engelleme; kullanıcıyı bilgilendir.
+            self._log_callback(task.id)(
+                "Uyarı: ffprobe bulunamadığı için ses/görüntü doğrulanamadı."
+            )
+            return
+        has_video, has_audio = streams
+        quality = str(task.quality or "best")
+        if quality == "audio":
+            if not has_audio:
+                raise PermanentDownloadError(
+                    "İndirilen dosyada ses akışı bulunamadı; dosya tamamlanmış sayılmadı.",
+                    code="missing_audio",
+                )
+            return
+        if str(task.kind or "") in {"page", "hls", "dash"}:
+            missing = []
+            if not has_video:
+                missing.append("görüntü")
+            if not has_audio:
+                missing.append("ses")
+            if missing:
+                raise PermanentDownloadError(
+                    "İndirilen dosyada "
+                    + " ve ".join(missing)
+                    + " akışı yok; eksik dosya tamamlanmış sayılmadı.",
+                    code="missing_stream",
+                )
+            return
+        # Doğrudan bağlantı: video varsa sesi de olmalı. Yalnızca ses içeren
+        # dosyalar (MP3/M4A vb.) geçerli kabul edilir.
+        if has_video and not has_audio:
+            raise PermanentDownloadError(
+                "İndirilen videoda ses akışı yok; dosya tamamlanmış sayılmadı.",
+                code="missing_audio",
+            )
+        if not has_video and not has_audio:
+            raise PermanentDownloadError(
+                "İndirilen dosyada ses veya görüntü akışı bulunamadı.",
+                code="missing_media",
+            )
 
     def _merge_av(self, video_path: str, audio_path: str) -> str:
         """Video ve ses dosyalarını ffmpeg ile tek dosyada birleştirir.
@@ -1600,13 +1711,32 @@ class DownloadManager:
                 except Exception as exc:
                     if not os.path.isfile(video_path):
                         raise
-                    # Birleştirme başarısız olsa da indirilen videoyu kaybetme.
-                    log.warning(
-                        "Ses/video birleştirilemedi, video tek başına kullanılacak: %s",
-                        exc,
-                    )
+                    log.warning("Ses/video birleştirilemedi: %s", exc)
                     self._log_callback(task_id)(f"Birleştirme hatası: {exc}")
-                    path = video_path
+                    # Video-only dosyayı başarılı sayma. Aynı sayfada sesli
+                    # birleşik bir akış varsa onu dene; yoksa görevi hata yap.
+                    combined_url = self._find_combined_stream(task, probe=True)
+                    if combined_url and combined_url != task.url:
+                        log.info(
+                            "Birleştirme yerine sesli birleşik akış deneniyor: %s",
+                            combined_url[:160],
+                        )
+                        path = self._download_one(task, combined_url, task_id)
+                        for source in (video_path, audio_path):
+                            try:
+                                Path(source).unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    else:
+                        task.audio_url = ""
+                        self._log_callback(task_id)(
+                            f"Birleştirilemeyen dosyalar: {video_path}, {audio_path}"
+                        )
+                        raise PermanentDownloadError(
+                            "Ses ve görüntü birleştirilemedi; eksik dosya "
+                            "tamamlanmış sayılmadı.",
+                            code="merge_failed",
+                        ) from exc
                     task.audio_url = ""
             else:
                 if mode == "direct":
@@ -1659,6 +1789,10 @@ class DownloadManager:
                         if task_id in self.cancel_requested:
                             downloader.cancel()
                     path = downloader.run()
+
+            # Son güvenlik kontrolü: video indirmelerinde hem ses hem görüntü
+            # akışı bulunmalı. Eksik dosya "tamamlandı" olarak işaretlenmez.
+            self._validate_final_media(task, path)
 
             with self.lock:
                 if task_id in self.cancel_requested:
