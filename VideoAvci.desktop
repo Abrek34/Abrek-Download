@@ -1,0 +1,15 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Abrek Download
+GenericName=Video İndirici
+Comment=Tarayıcı eklentisiyle yakaladığınız videoları indirin
+Exec="/home/liveuser/Desktop/Abrek-Download-main/baslat.sh"
+Icon=/home/liveuser/Desktop/Abrek-Download-main/assets/icon.png
+Terminal=false
+Categories=AudioVideo;FileTransfer;
+Keywords=video;indir;indirme;download;yt-dlp;yakala;abrek;
+StartupNotify=true
+StartupWMClass=Abrekdownload
+X-GNOME-UsesNotifications=true
