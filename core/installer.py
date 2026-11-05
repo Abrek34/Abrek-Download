@@ -250,7 +250,7 @@ def _venv_details(project_dir: Path) -> tuple[Check, Check]:
         )
     code = (
         "import json, sys\n"
-        "import requests, yt_dlp\n"
+        "import requests, yt_dlp, socks\n"
         "print(json.dumps({'python': sys.version.split()[0], "
         "'yt_dlp': yt_dlp.version.__version__, 'requests': requests.__version__}))\n"
     )

@@ -45,8 +45,8 @@ video.m3u8
                     manager._probe_capture(capture.id)
                     ffprobe.assert_not_called()
                     ytdlp.assert_not_called()
-        self.assertEqual(capture.media_kind, "manifest")
-        self.assertEqual(capture.media_info, "1080p · sesli")
+        self.assertEqual(capture.media_kind, "av")
+        self.assertEqual(capture.media_info, "1080p")
         self.assertFalse(capture.drm)
         manager._save_locked.assert_called()
 
@@ -69,8 +69,8 @@ audio.m3u8
             with mock.patch.object(manager, "_probe_with_ytdlp") as ytdlp:
                 manager._probe_capture(capture.id)
                 ytdlp.assert_not_called()
-        self.assertEqual(capture.media_kind, "manifest")
-        self.assertEqual(capture.media_info, "sesli")
+        self.assertEqual(capture.media_kind, "audio")
+        self.assertEqual(capture.media_info, "ses")
 
     def test_incomplete_probe_uses_ytdlp_fallback(self):
         capture = Capture(url="https://cdn.test/segment.ts", kind="direct")

@@ -42,8 +42,6 @@ class HostAllowedTests(unittest.TestCase):
 class OriginAllowedTests(unittest.TestCase):
     def test_allows_extensions_and_local_dashboard(self):
         for value in (
-            None,
-            "",
             "chrome-extension://abcdefghijklmnop",
             "moz-extension://abcdefghijklmnop",
             "safari-web-extension://abcdefghijklmnop",
@@ -53,8 +51,10 @@ class OriginAllowedTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertTrue(origin_allowed(value))
 
-    def test_rejects_null_and_foreign_origins(self):
+    def test_rejects_empty_and_null_and_foreign_origins(self):
         for value in (
+            None,
+            "",
             "null",
             "https://evil.example",
             "http://127.0.0.1:9999",

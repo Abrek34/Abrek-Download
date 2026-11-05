@@ -274,8 +274,12 @@ async function fetchJson(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
+    const settings = await readSettings();
+    const headers = { ...options.headers };
+    if (settings.apiToken) headers['X-Abrek-Token'] = settings.apiToken;
     const response = await fetch(url, {
       ...options,
+      headers,
       signal: controller.signal,
       cache: 'no-store',
       credentials: 'omit',

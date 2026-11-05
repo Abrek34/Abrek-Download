@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.12.0"
+VERSION = "1.12.1"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -106,6 +106,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "download_subtitles": False,
     "subtitle_langs": "tr,en",
     "shutdown_on_finish": "none",  # none | shutdown | suspend
+    "api_token": "",  # Yerel köprüye erişim için isteğe bağlı eşleştirme tokeni
 }
 
 QUALITIES = {"best", "2160", "1440", "1080", "720", "480", "audio"}
@@ -214,6 +215,7 @@ class Config:
         self.data["history_limit"] = _coerce_int(
             self.data.get("history_limit"), 200, 0, 2000
         )
+        self.data["api_token"] = _coerce_text(self.data.get("api_token"))
 
     def load(self) -> None:
         stored = load_json(self.path, {})

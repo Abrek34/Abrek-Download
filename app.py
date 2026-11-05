@@ -843,18 +843,29 @@ class VideoAvciApp(tk.Tk):
 
     # ------------------------------------------------------------------ yakalananlar
     def download_capture(self, capture_id: str) -> None:
-        try:
-            task, duplicate = self.manager.download_capture(capture_id)
-        except ValueError as exc:
-            self.toast(str(exc), "error")
-            return
-        except Exception as exc:
-            self.toast(t("toast.download_failed", error=exc), "error")
-            return
+        # Ses/görüntü eşleştirmesi yt-dlp probe'u çalıştırabilir; arayüzün
+        # donmaması için kuyruğa ekleme işlemini arka planda yap.
+        def worker() -> None:
+            try:
+                task, duplicate = self.manager.download_capture(capture_id)
+            except ValueError as exc:
+                message = str(exc)
+                self.post(lambda: self.toast(message, "error"))
+                return
+            except Exception as exc:
+                message = t("toast.download_failed", error=exc)
+                self.post(lambda: self.toast(message, "error"))
+                return
+            title = task.display_title()
+            self.post(lambda: self._capture_queued(title, duplicate))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _capture_queued(self, title: str, duplicate: bool) -> None:
         if duplicate:
             self.toast(t("toast.already_queued"), "warning")
         else:
-            self.toast(t("toast.download_started", title=task.display_title()), "success")
+            self.toast(t("toast.download_started", title=title), "success")
         self.show_page("downloads")
 
     def remove_capture(self, capture_id: str) -> None:

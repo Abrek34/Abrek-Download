@@ -222,6 +222,10 @@ class SettingsPage(tk.Frame):
             bg=CARD,
         ).pack(side="left", padx=(6, 0))
 
+        row = self._row(body, t("settings.api_token"), t("settings.api_token_hint"))
+        self.api_token_entry = self._entry(row, width=30)
+        self.api_token_entry.pack(side="right", padx=(16, 0), ipady=6, ipadx=4)
+
     def _build_behavior_section(self, parent: tk.Misc) -> None:
         body = self._section(
             parent,
@@ -450,6 +454,8 @@ class SettingsPage(tk.Frame):
         self.proxy_entry.insert(0, str(config.get("proxy") or ""))
         self.cookies_file_entry.delete(0, "end")
         self.cookies_file_entry.insert(0, str(config.get("cookies_file") or ""))
+        self.api_token_entry.delete(0, "end")
+        self.api_token_entry.insert(0, str(config.get("api_token") or ""))
         try:
             history_limit = max(0, min(2000, int(config.get("history_limit", 200))))
         except (TypeError, ValueError):
@@ -564,6 +570,11 @@ class SettingsPage(tk.Frame):
                 return
             cookies_file_text = str(expanded)
 
+        api_token_text = self.api_token_entry.get().strip()
+        if api_token_text and len(api_token_text) < 8:
+            self.app.toast(t("settings.err.api_token_short"), "error")
+            return
+
         try:
             history_limit = self._parse_int(
                 self.history_combo.get(), t("settings.history_limit"), 0, 2000
@@ -610,6 +621,7 @@ class SettingsPage(tk.Frame):
                 "cookies_file": cookies_file_text,
                 "proxy": proxy_text,
                 "history_limit": history_limit,
+                "api_token": api_token_text,
                 "language": selected_lang_code,
                 "auto_resume": bool(self.auto_resume_var.get()),
                 "auto_retry": bool(self.auto_retry_var.get()),

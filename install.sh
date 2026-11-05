@@ -107,7 +107,12 @@ prepare_environment() {
     if ! "$PROJECT_DIR/.venv/bin/python" -c "import tkinter" >/dev/null 2>&1; then
         echo "Uyarı: Tkinter bulunamadı. Arch/CachyOS için: sudo pacman -S tk" >&2
     fi
-    if ! "$PROJECT_DIR/.venv/bin/python" -c "import yt_dlp, requests" >/dev/null 2>&1; then
+    if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+        echo "Uyarı: ffmpeg/ffprobe bulunamadı." >&2
+        echo "Video birleştirme ve ses çıkarma özellikleri çalışmayabilir." >&2
+        echo "Arch/CachyOS için: sudo pacman -S ffmpeg" >&2
+    fi
+    if ! "$PROJECT_DIR/.venv/bin/python" -c "import yt_dlp, requests, socks" >/dev/null 2>&1; then
         echo "Python bağımlılıkları kuruluyor…"
         "$PROJECT_DIR/.venv/bin/python" -m pip install --upgrade pip
         "$PROJECT_DIR/.venv/bin/python" -m pip install -r "$PROJECT_DIR/requirements.txt"

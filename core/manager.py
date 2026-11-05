@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -46,6 +46,8 @@ from .models import (
 )
 from .probe import MediaProbe, hls_first_segment, probe_bytes
 from .utils import (
+    AUDIO_EXTENSIONS,
+    MEDIA_EXTENSIONS,
     USER_AGENT,
     atomic_write_json,
     cookies_file_path,
@@ -59,6 +61,7 @@ from .utils import (
     now,
     requests_proxies,
     unique_path,
+    url_extension,
 )
 from .ytdlp import (
     DownloadCanceled as YtCanceled,
@@ -94,6 +97,10 @@ PROBE_MAX_REDIRECTS = 5
 # Tam günlük bellekte tutulur; diske yazılan kopya kısaltılarak queue.json'un
 # yüzlerce görevle megabaytlara şişmesi engellenir.
 SAVED_LOG_LIMIT = 2000
+
+# snapshot() önbelleği süresi (saniye). Arayüz her 700 ms'de bir durumu
+# sorar; önbellekle tekrarlayan serileştirme engellenir.
+SNAPSHOT_CACHE_TTL = 0.3
 
 
 @dataclass
@@ -188,6 +195,9 @@ class DownloadManager:
         self._probe_queue: queue.Queue[str] = queue.Queue()
         self._probe_enqueued: set[str] = set()
         self._probe_pending: set[str] = set()
+        self._snapshot_cache: dict[str, Any] | None = None
+        self._snapshot_cache_time: float = 0.0
+        self._dirty: bool = False
         self._load()
         for index in range(PROBE_WORKERS):
             threading.Thread(
@@ -253,6 +263,7 @@ class DownloadManager:
                     capture.probed_at = max(0.0, float(capture.probed_at or 0.0))
                 except (TypeError, ValueError):
                     capture.probed_at = 0.0
+                DownloadManager._normalize_capture_role_label(capture)
                 seen.add(capture.url)
                 self.captures.append(capture)
             self.captures.sort(key=lambda capture: capture.created_at, reverse=True)
@@ -292,6 +303,8 @@ class DownloadManager:
             throttle = False
         if throttle and time.monotonic() - self._last_save < 6.0:
             return
+        if not self._dirty and not self._shutting_down:
+            return
         try:
             self._prune_history_locked()
             tasks = []
@@ -305,6 +318,7 @@ class DownloadManager:
             captures = [capture.to_dict() for capture in self.captures]
             atomic_write_json(CAPTURES_FILE, captures)
             self._last_save = time.monotonic()
+            self._dirty = False
         except Exception as exc:
             log.exception("Durum kaydedilemedi: %s", exc)
 
@@ -321,6 +335,14 @@ class DownloadManager:
             return self.tasks.get(task_id)
 
     def snapshot(self) -> dict[str, Any]:
+        current = time.monotonic()
+        cache = getattr(self, "_snapshot_cache", None)
+        cache_time = getattr(self, "_snapshot_cache_time", 0.0)
+        if (
+            cache is not None
+            and current - cache_time < SNAPSHOT_CACHE_TTL
+        ):
+            return cache
         with self.lock:
             tasks = [task.snapshot() for task in self.tasks.values()]
             captures = [capture.to_dict() for capture in self.captures]
@@ -329,13 +351,13 @@ class DownloadManager:
             completed = sum(1 for task in self.tasks.values() if task.status == "completed")
             errors = sum(1 for task in self.tasks.values() if task.status == "error")
             speed = sum(task.speed for task in self.tasks.values() if task.status in ACTIVE_STATUSES)
-            current = time.time()
+            current_time = time.time()
             retrying = sum(
                 1
                 for task in self.tasks.values()
-                if task.status == "queued" and float(task.available_at or 0.0) > current
+                if task.status == "queued" and float(task.available_at or 0.0) > current_time
             )
-            return {
+            result = {
                 "tasks": tasks,
                 "captures": captures,
                 "active": active,
@@ -347,6 +369,9 @@ class DownloadManager:
                 "capture_count": len(captures),
                 "capture_paused": bool(self.config.get("capture_paused", False)),
             }
+        self._snapshot_cache = result
+        self._snapshot_cache_time = current
+        return result
 
     def stats(self) -> dict[str, Any]:
         with self.lock:
@@ -441,6 +466,8 @@ class DownloadManager:
         if not is_http_url(url):
             raise ValueError("Geçerli bir http/https bağlantısı girin.")
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             for existing in self.tasks.values():
                 if existing.url == url and existing.status not in {"completed", "canceled"}:
                     return existing, True
@@ -497,6 +524,8 @@ class DownloadManager:
             and ("/reels/" in page_url_norm or "/reel/" in page_url_norm or "/p/" in page_url_norm)
         )
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             if is_instagram_single:
                 for existing in self.captures:
                     if existing.page_url == capture.page_url:
@@ -904,8 +933,21 @@ class DownloadManager:
             media_info = self._resolution_from_url(url)
             new_kind = ""
         else:
-            if original_kind in {"hls", "dash"}:
-                new_kind = "manifest"
+            is_manifest = original_kind in {"hls", "dash"}
+            if is_manifest:
+                # HLS/DASH yayınları ses ve görüntüyü ayrı medya listeleri
+                # hâlinde sunabilir. Rolü kesinleşen akışları "manifest"
+                # yerine gerçek türleriyle etiketle; böylece listede
+                # "SES (sadece)" ile "GÖRÜNTÜ ... sessiz" ayrımı net görünür
+                # ve indirirken tamamlayıcı akış eşleştirilebilir.
+                if has_video and has_audio and probe.video_known and probe.audio_known:
+                    new_kind = "av"
+                elif has_video and not has_audio and probe.audio_known:
+                    new_kind = "video"
+                elif has_audio and not has_video and probe.video_known:
+                    new_kind = "audio"
+                else:
+                    new_kind = "manifest"
             elif has_video and has_audio:
                 new_kind = "av"
             elif has_video:
@@ -923,17 +965,11 @@ class DownloadManager:
             elif has_audio and not has_video:
                 media_info = "ses"
 
-            if original_kind in {"hls", "dash"}:
-                if has_audio and not has_video:
-                    media_info = "sesli"
-                elif has_audio:
-                    media_info = (
-                        f"{media_info} · sesli".strip() if media_info else "sesli"
-                    )
-                elif probe.audio_known:
-                    media_info = (
-                        f"{media_info} · sessiz".strip() if media_info else "sessiz"
-                    )
+            if is_manifest and has_video and not has_audio and probe.audio_known:
+                # Video-only HLS/DASH: etikette "sessiz" bilgisini koru.
+                media_info = (
+                    f"{media_info} · sessiz".strip(" ·") if media_info else "sessiz"
+                )
             if not media_info:
                 media_info = self._resolution_from_url(url)
 
@@ -1018,30 +1054,72 @@ class DownloadManager:
             if capture.drm:
                 # DRM korumalı içerik indirilemez; korumayı aşmaya çalışmıyoruz.
                 raise ValueError(t("error.drm"))
+
+        # Eşleştirme yt-dlp probe'u çalıştırabilir; kilit dışında yapılır.
+        anchor, audio_url = self._pair_capture(capture)
+
+        with self.lock:
+            # Kilit dışında yakalama kaldırılmış olabilir.
+            if not any(item.id == capture.id for item in self.captures):
+                raise ValueError("Yakalanan video bulunamadı.")
             for existing in self.tasks.values():
-                if existing.url == capture.url and existing.status not in {"completed", "canceled"}:
+                if existing.url == anchor.url and existing.status not in {"completed", "canceled"}:
                     return existing, True
             task = self._add_task_locked(
-                capture.url,
-                kind=capture.kind,
-                title=capture.title or capture.page_title,
-                page_url=capture.page_url,
-                referer=capture.referer or capture.page_url,
+                anchor.url,
+                kind=anchor.kind,
+                title=(
+                    capture.title
+                    or capture.page_title
+                    or anchor.title
+                    or anchor.page_title
+                ),
+                page_url=capture.page_url or anchor.page_url,
+                referer=(
+                    capture.referer
+                    or capture.page_url
+                    or anchor.referer
+                    or anchor.page_url
+                ),
             )
-            self.captures = [item for item in self.captures if item.id != capture_id]
+            task.audio_url = audio_url
+            remove_ids = {capture.id, anchor.id}
+            if audio_url:
+                # Eşleştirilen ses yakalaması da listeden düşsün; aynı akış
+                # ikinci kez tek başına kuyruğa eklenmesin.
+                remove_ids.update(
+                    item.id for item in self.captures if item.url == audio_url
+                )
+            self.captures = [
+                item for item in self.captures if item.id not in remove_ids
+            ]
             self._save_locked()
             self._wake.set()
+            if audio_url:
+                log.info(
+                    "Yakalama ses+görüntü olarak eşleştirildi: %s + %s",
+                    anchor.url[:120],
+                    audio_url[:120],
+                )
             return task, False
 
     def download_all_captures(self) -> tuple[int, int]:
         """Listedeki tüm yakalananları kuyruğa ekler.
 
+        Aynı sayfadaki ses-only ve görüntü-only akışlar tek görevde
+        birleştirilir; eşleştirilen yakalamalar ikinci kez kuyruğa eklenmez.
         Dönen değer: (eklenen, zaten kuyrukta olan) sayısı.
         """
         with self.lock:
             capture_ids = [capture.id for capture in self.captures]
         added = duplicates = 0
         for capture_id in capture_ids:
+            with self.lock:
+                still_present = any(
+                    capture.id == capture_id for capture in self.captures
+                )
+            if not still_present:
+                continue
             try:
                 _, duplicate = self.download_capture(capture_id)
             except Exception:
@@ -1055,16 +1133,22 @@ class DownloadManager:
 
     def remove_capture(self, capture_id: str) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             self.captures = [item for item in self.captures if item.id != capture_id]
             self._save_locked()
 
     def clear_captures(self) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             self.captures = []
             self._save_locked()
 
     def pause_task(self, task_id: str) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             task = self.tasks.get(task_id)
             if task is None:
                 return
@@ -1088,6 +1172,8 @@ class DownloadManager:
 
     def resume_task(self, task_id: str) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             task = self.tasks.get(task_id)
             if task is None or task.status not in {"paused", "error", "canceled"}:
                 return
@@ -1108,6 +1194,8 @@ class DownloadManager:
 
     def cancel_task(self, task_id: str) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             task = self.tasks.get(task_id)
             if task is None:
                 return
@@ -1134,6 +1222,8 @@ class DownloadManager:
 
     def retry_task(self, task_id: str) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             task = self.tasks.get(task_id)
             if task is None:
                 return
@@ -1159,6 +1249,8 @@ class DownloadManager:
 
     def remove_task(self, task_id: str) -> bool:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             task = self.tasks.get(task_id)
             if task is None:
                 return False
@@ -1171,6 +1263,8 @@ class DownloadManager:
 
     def clear_completed(self) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             self.tasks = {
                 task_id: task
                 for task_id, task in self.tasks.items()
@@ -1180,6 +1274,8 @@ class DownloadManager:
 
     def clear_finished(self) -> None:
         with self.lock:
+            self._dirty = True
+            self._snapshot_cache = None
             keep: dict[str, DownloadTask] = {}
             for task_id, task in self.tasks.items():
                 if task.status in FINISHED_STATUSES:
@@ -1506,32 +1602,168 @@ class DownloadManager:
             and not task.audio_url
         )
 
-    def _find_matching_audio(self, task: "DownloadTask") -> str:
-        """Aynı sayfadaki ses-only HLS/DASH yakalamasını bulur.
+    @staticmethod
+    def _capture_role(capture: "Capture | None") -> str:
+        """Yakalamanın akış rolünü döndürür: ``audio``, ``video``, ``av`` veya ``""``.
 
-        Etiketi zaten ``audio`` olan adaylar önce denenir; her probe yt-dlp alt
-        süreci başlattığı için en fazla birkaç aday incelenir. Yalnızca gerçekten
-        ses içeren ve görüntü içermeyen bir akış döner; aksi halde boş dize.
+        HLS/DASH medya listeleri ayrı ses ve görüntü akışlarıdır. Bu akışların
+        yt-dlp biçim bilgisi çoğu zaman güvenilir değildir (her ikisi de
+        ``video_ext=mp4`` görünebilir); bu yüzden uygulamanın kendi probe
+        etiketleri birincil kaynak olarak kullanılır.
         """
-        if not task.page_url:
+        if capture is None:
             return ""
+        # Sayfa yakalamaları tam video sayfasıdır; ses/görüntü parçası değildir.
+        if str(getattr(capture, "kind", "") or "").strip().lower() == "page":
+            return ""
+        media_kind = str(getattr(capture, "media_kind", "") or "").strip().lower()
+        if media_kind in {"audio", "video", "av"}:
+            return media_kind
+        info = str(getattr(capture, "media_info", "") or "").strip().lower()
+        if "sessiz" in info:
+            return "video"
+        if "sesli" in info:
+            # "1080p · sesli" birleşik akıştır; yalnızca "sesli" ses-only'dir.
+            if re.search(r"\d{3,4}\s*p", info):
+                return "av"
+            return "audio"
+        if info in {"ses", "sadece ses"}:
+            return "audio"
+        content_type = str(getattr(capture, "content_type", "") or "").strip().lower()
+        if content_type.startswith("audio/"):
+            return "audio"
+        if content_type.startswith("video/"):
+            return "video"
+        extension = url_extension(str(getattr(capture, "url", "") or ""))
+        if extension in AUDIO_EXTENSIONS:
+            return "audio"
+        if extension in MEDIA_EXTENSIONS:
+            return "video"
+        return ""
+
+    @staticmethod
+    def _normalize_capture_role_label(capture: "Capture") -> None:
+        """Eski ``manifest`` etiketlerini ses/görüntü rolüne dönüştürür.
+
+        Önceki sürümlerde ses-only HLS akışları ``manifest`` + ``sesli``,
+        görüntü-only akışlar ``manifest`` + ``... · sessiz`` olarak
+        kaydediliyordu. Bunları yeni etiketlere taşı ki kullanıcı listeyi
+        yeniden probe beklemeden doğru görsün.
+        """
+        if str(getattr(capture, "media_kind", "") or "") != "manifest":
+            return
+        role = DownloadManager._capture_role(capture)
+        if role not in {"audio", "video", "av"}:
+            return
+        capture.media_kind = role
+        if role == "av":
+            info = str(getattr(capture, "media_info", "") or "")
+            capture.media_info = re.sub(
+                r"\s*·\s*sesli\s*$",
+                "",
+                info,
+                flags=re.IGNORECASE,
+            ).strip()
+
+    @staticmethod
+    def _page_key(url: str) -> str:
+        """Sayfa adresini sorgu dizesiyle birlikte karşılaştırılabilir hâle getirir."""
+        try:
+            parts = urlsplit(str(url or "").strip())
+        except ValueError:
+            return ""
+        if not parts.netloc:
+            return ""
+        host = parts.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        path = parts.path.rstrip("/") or "/"
+        return f"{host}{path}" + (f"?{parts.query}" if parts.query else "")
+
+    @classmethod
+    def _same_page(cls, first: str, second: str) -> bool:
+        """İki adresin aynı video sayfasına ait olup olmadığını söyler."""
+        first = str(first or "").strip()
+        second = str(second or "").strip()
+        if not first or not second:
+            return False
+        if first == second:
+            return True
+        key = cls._page_key(first)
+        return bool(key) and key == cls._page_key(second)
+
+    def _find_stream_capture(
+        self,
+        page_url: str,
+        exclude_url: str,
+        role: str,
+        *,
+        probe: bool = True,
+        probe_limit: int = 3,
+    ) -> "Capture | None":
+        """Aynı sayfadaki istenen roldeki (ses/görüntü) akışı bulur.
+
+        Önce uygulamanın kendi probe etiketleri kullanılır; etiketi bilinmeyen
+        adaylar için yalnızca sınırlı sayıda yt-dlp probe'u çalıştırılır.
+        """
+        if role not in {"audio", "video"}:
+            return None
+        page_url = str(page_url or "").strip()
+        if not page_url:
+            return None
         with self.lock:
             candidates = [
                 capture
                 for capture in self.captures
-                if capture.page_url == task.page_url
-                and capture.kind in {"hls", "dash"}
+                if capture.url != exclude_url
+                and getattr(capture, "kind", "") in {"hls", "dash", "direct"}
                 and not getattr(capture, "drm", False)
-                and capture.url != task.url
+                and DownloadManager._same_page(
+                    str(getattr(capture, "page_url", "") or ""),
+                    page_url,
+                )
             ]
-        candidates.sort(key=lambda capture: capture.media_kind != "audio")
-        for capture in candidates[:3]:
-            if capture.media_kind == "audio":
-                return capture.url
-            audio, video = self._probe_av(capture.url, task.page_url or capture.page_url)
-            if audio and not video:
-                return capture.url
-        return ""
+        unknown: list[Capture] = []
+        for capture in candidates:
+            capture_role = DownloadManager._capture_role(capture)
+            if capture_role == role:
+                return capture
+            if capture_role in {"", "manifest"}:
+                unknown.append(capture)
+        if not probe:
+            return None
+        for capture in unknown[: max(0, int(probe_limit))]:
+            audio, video = self._probe_av(
+                capture.url,
+                page_url or str(getattr(capture, "page_url", "") or ""),
+            )
+            if role == "audio" and audio and not video:
+                return capture
+            if role == "video" and video and not audio:
+                return capture
+        return None
+
+    def _find_matching_audio(self, task: "DownloadTask") -> str:
+        """Aynı sayfadaki ses-only yakalamayı bulur; yoksa boş dize döner."""
+        capture = DownloadManager._find_stream_capture(
+            self,
+            str(getattr(task, "page_url", "") or ""),
+            str(getattr(task, "url", "") or ""),
+            "audio",
+            probe=True,
+        )
+        return capture.url if capture is not None else ""
+
+    def _find_matching_video(self, task: "DownloadTask") -> str:
+        """Aynı sayfadaki görüntü-only yakalamayı bulur; yoksa boş dize döner."""
+        capture = DownloadManager._find_stream_capture(
+            self,
+            str(getattr(task, "page_url", "") or ""),
+            str(getattr(task, "url", "") or ""),
+            "video",
+            probe=True,
+        )
+        return capture.url if capture is not None else ""
 
     def _find_combined_stream(self, task: "DownloadTask", probe: bool = False) -> str:
         """Ses-only akış bulunamazsa aynı sayfadaki sesli/birleşik akışı döner.
@@ -1540,33 +1772,156 @@ class DownloadManager:
         durumda medya etiketi güvenilir değilse adayların gerçekten iki akış
         içerdiği yt-dlp ile sınırlı sayıda denenir.
         """
-        if not task.page_url:
+        page_url = str(getattr(task, "page_url", "") or "").strip()
+        if not page_url:
             return ""
         with self.lock:
             candidates = [
                 capture
                 for capture in self.captures
-                if capture.page_url == task.page_url
-                and capture.kind in {"hls", "dash"}
+                if getattr(capture, "kind", "") in {"hls", "dash", "direct"}
                 and not getattr(capture, "drm", False)
                 and capture.url != task.url
+                and DownloadManager._same_page(
+                    str(getattr(capture, "page_url", "") or ""),
+                    page_url,
+                )
             ]
-        for capture in (candidates[:3] if probe else candidates):
-            info = (capture.media_info or "").lower()
-            # "1080p · sesli" gibi hem çözünürlük hem ses içeren kayıtlar
-            # birleşik akıştır; sadece "sesli" olanlar ses-only'dir.
-            if "sessiz" in info:
-                continue
-            if "sesli" in info and any(char.isdigit() for char in info):
+        unknown: list[Capture] = []
+        for capture in candidates:
+            capture_role = DownloadManager._capture_role(capture)
+            if capture_role == "av":
                 return capture.url
-            if probe:
+            if capture_role in {"", "manifest"}:
+                unknown.append(capture)
+        if probe:
+            for capture in unknown[:3]:
                 audio, video = self._probe_av(
                     capture.url,
-                    task.page_url or capture.page_url,
+                    page_url or str(getattr(capture, "page_url", "") or ""),
                 )
                 if audio and video:
                     return capture.url
         return ""
+
+    def _pair_capture(self, capture: "Capture") -> tuple["Capture", str]:
+        """Seçilen yakalamayı aynı sayfadaki tamamlayıcı akışla eşleştirir.
+
+        Dönen ilk değer indirilecek ana (mümkünse görüntü) yakalama, ikinci
+        değer ise ffmpeg ile birleştirilecek ses akışı URL'sidir. Eşleşme
+        yoksa yakalamanın kendisi ve boş dize döner.
+        """
+        page_url = str(
+            getattr(capture, "page_url", "")
+            or getattr(capture, "referer", "")
+            or ""
+        ).strip()
+        role = DownloadManager._capture_role(capture)
+        if role == "audio":
+            video = DownloadManager._find_stream_capture(
+                self,
+                page_url,
+                capture.url,
+                "video",
+                probe=True,
+            )
+            if video is not None:
+                return video, capture.url
+        elif role == "video":
+            audio = DownloadManager._find_stream_capture(
+                self,
+                page_url,
+                capture.url,
+                "audio",
+                probe=True,
+            )
+            if audio is not None:
+                return capture, audio.url
+        return capture, ""
+
+    def _prepare_av_pair(self, task: "DownloadTask") -> None:
+        """Görev URL'sine göre ses/görüntü akışlarını iki yönlü eşleştirir.
+
+        Kullanıcı ister ses-only ister görüntü-only yakalamayı seçsin, aynı
+        sayfada tamamlayıcı akış varsa görev tek dosyada birleştirilir.
+        """
+        if str(task.quality or "best") == "audio":
+            return
+        page_url = str(getattr(task, "page_url", "") or "").strip()
+        if not page_url:
+            return
+        capture = None
+        with self.lock:
+            for item in self.captures:
+                if item.url == task.url:
+                    capture = item
+                    break
+        role = DownloadManager._capture_role(capture) if capture is not None else ""
+
+        if role == "audio":
+            video = DownloadManager._find_stream_capture(
+                self,
+                page_url,
+                task.url,
+                "video",
+                probe=True,
+            )
+            if video is not None:
+                task.audio_url = task.url
+                task.url = video.url
+                if str(getattr(video, "kind", "") or ""):
+                    task.kind = video.kind
+                log.info(
+                    "Ses akışı görüntü akışıyla eşleştirildi: %s + %s",
+                    video.url[:120],
+                    task.audio_url[:120],
+                )
+                return
+            combined = DownloadManager._find_combined_stream(self, task, probe=True)
+            if combined and combined != task.url:
+                task.url = combined
+                task.audio_url = ""
+                log.info("Ses akışı yerine sesli birleşik akışa geçildi: %s", combined[:160])
+            return
+
+        if role == "video":
+            audio = DownloadManager._find_stream_capture(
+                self,
+                page_url,
+                task.url,
+                "audio",
+                probe=True,
+            )
+            if audio is not None:
+                task.audio_url = audio.url
+                log.info(
+                    "Görüntü akışı ses akışıyla eşleştirildi: %s + %s",
+                    task.url[:120],
+                    audio.url[:120],
+                )
+                return
+            combined = DownloadManager._find_combined_stream(self, task, probe=True)
+            if combined and combined != task.url:
+                task.url = combined
+                task.audio_url = ""
+                log.info("Sessiz akış yerine sesli birleşik akışa geçildi: %s", combined[:160])
+            return
+
+        if role == "av":
+            return
+
+        # Rol bilinmiyorsa eski davranış: HLS/DASH için ses akışı ara.
+        if task.kind in {"hls", "dash"}:
+            audio = DownloadManager._find_matching_audio(self, task)
+            if audio:
+                task.audio_url = audio
+                log.info("Eşleşen ses akışı bulundu: %s", audio[:160])
+                return
+            combined = DownloadManager._find_combined_stream(self, task)
+            if combined and combined != task.url:
+                task.url = combined
+                task.audio_url = ""
+                log.info("Sesli birleşik akışa geçildi: %s", combined[:160])
 
     def _download_one(
         self,
@@ -1574,6 +1929,7 @@ class DownloadManager:
         url: str,
         task_id: str,
         audio_only: bool = False,
+        video_only: bool = False,
     ) -> str:
         orig_url = task.url
         task.url = url
@@ -1585,6 +1941,7 @@ class DownloadManager:
             self._log_callback(task_id),
             self._metadata_callback(task_id),
             audio_only=audio_only,
+            video_only=video_only,
         )
         try:
             with self.lock:
@@ -1629,10 +1986,22 @@ class DownloadManager:
             if not has_audio:
                 missing.append("ses")
             if missing:
+                hint = ""
+                if not has_video:
+                    hint = (
+                        " Aynı sayfada eşleşen görüntü akışı bulunamadı; "
+                        "sayfa bağlantısını (SAYFA) indirmeyi deneyin."
+                    )
+                elif not has_audio:
+                    hint = (
+                        " Aynı sayfada eşleşen ses akışı bulunamadı; "
+                        "sayfa bağlantısını (SAYFA) indirmeyi deneyin."
+                    )
                 raise PermanentDownloadError(
                     "İndirilen dosyada "
                     + " ve ".join(missing)
-                    + " akışı yok; eksik dosya tamamlanmış sayılmadı.",
+                    + " akışı yok; eksik dosya tamamlanmış sayılmadı."
+                    + hint,
                     code="missing_stream",
                 )
             return
@@ -1661,11 +2030,18 @@ class DownloadManager:
         if not video_p.is_file() or not audio_p.is_file():
             raise FileNotFoundError("Birleştirilecek video veya ses dosyası bulunamadı.")
 
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if not ffmpeg_bin:
+            raise FileNotFoundError(
+                "ffmpeg bulunamadı. Video ve ses birleştirme için ffmpeg kurmalısınız "
+                "(Arch/CachyOS: sudo pacman -S ffmpeg)."
+            )
+
         errors: list[str] = []
         for suffix in (".mp4", ".mkv"):
             target = unique_path(video_p.parent, f"{video_p.stem}_merged{suffix}")
             cmd = [
-                "ffmpeg",
+                ffmpeg_bin,
                 "-y",
                 "-hide_banner",
                 "-loglevel",
@@ -1727,33 +2103,27 @@ class DownloadManager:
             mode = self._mode_for(task)
             log.info("Görev başlıyor: %s mod=%s", task_id, mode)
 
-            # Ses+görüntü birleştirme: video-only HLS için aynı sayfadaki
-            # başka bir HLS yakalamasını bul ve tek dosyada birleştir.
-            # yt-dlp audio_ext/video_ext reliably ayrılamadığı için, sayfa URL'si
-            # ve URL farklılığıyla eşleşen başka bir hls yakalama yeterli.
-            if mode != "direct" and self._needs_av_merge(task):
+            # Ses+görüntü eşleştirme: kullanıcı ister ses-only ister
+            # görüntü-only yakalamayı seçsin, aynı sayfadaki tamamlayıcı akışı
+            # bul. HLS/DASH medya listelerinde yt-dlp biçim bilgisi çoğu zaman
+            # güvenilmez olduğu için uygulamanın kendi probe etiketleri kullanılır.
+            if str(task.quality or "best") != "audio":
                 try:
-                    audio_url = self._find_matching_audio(task)
-                    if audio_url:
-                        task.audio_url = audio_url
-                        self._save_locked()
-                        log.info("Eşleşen ses akışı bulundu: %s", audio_url[:160])
-                    else:
-                        # Ses-only akış bulunamazsa/son kullanma tarihi geçmişse,
-                        # aynı sayfadaki sesli (birleşik) akışa geç; böylece video
-                        # sessiz inmez.
-                        combined_url = self._find_combined_stream(task)
-                        if combined_url and combined_url != task.url:
-                            task.url = combined_url
-                            task.audio_url = ""
-                            self._save_locked()
-                            log.info("Sesli birleşik akışa geçildi: %s", combined_url[:160])
+                    self._prepare_av_pair(task)
+                    self._save_locked()
                 except Exception:
-                    pass
+                    log.exception("Ses/görüntü eşleştirmesi başarısız: %s", task_id)
 
-            if mode != "direct" and task.audio_url:
+            if task.audio_url:
                 # Birleştirilmiş indirme: önce video, sonra ses, sonra ffmpeg merge.
-                video_path = self._download_one(task, task.url, task_id)
+                # video_only seçicisi, sesi olmayan akışlarda yt-dlp'nin
+                # "format bulunamadı" hatasına düşmesini engeller.
+                video_path = self._download_one(
+                    task,
+                    task.url,
+                    task_id,
+                    video_only=True,
+                )
                 audio_path = self._download_one(task, task.audio_url, task_id, audio_only=True)
                 try:
                     path = self._merge_av(video_path, audio_path)

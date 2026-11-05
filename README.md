@@ -204,6 +204,8 @@ veya `~/Downloads/VideoAvci` olur. **Ayarlar** sekmesinden değiştirilebilir.
 - Giriş gerektiren siteler için çerez kaynağı (Brave, Firefox, Chrome, Chromium)
 - `cookies.txt` dosyası (tarayıcı çerezleri okunamadığında; dosya seçiliyse
   tarayıcı seçeneği yok sayılır)
+- Erişim tokeni (isteğe bağlı; yerel köprüye erişimi korur. Aynı token tarayıcı
+  eklentisinde de tanımlanmalıdır)
 - Otomatik devam, geçici hatalarda otomatik yeniden deneme ve deneme sayısı
 - Kuyruk geçmişi sınırı (tamamlanmış/hatalı görev sayısı; `0` = sınırsız)
 - Masaüstü bildirimleri
@@ -213,6 +215,21 @@ veya `~/Downloads/VideoAvci` olur. **Ayarlar** sekmesinden değiştirilebilir.
 kilitli olabilir. Chrome'un yeni sürümlerinde tarayıcı çerezleri okunamazsa
 tarayıcı eklentisiyle dışa aktardığınız Netscape biçimli `cookies.txt` dosyasını
 seçebilirsiniz.
+
+### Erişim tokeni (eşleştirme)
+
+Yerel köprü (`127.0.0.1:8765`) yalnızca tarayıcı eklentisinden gelen istekleri
+kabul eder. Ek bir koruma olarak **erişim tokeni** tanımlayabilirsiniz:
+
+1. **Ayarlar** sekmesinde bir token girin (en az 8 karakter önerilir).
+2. Tarayıcı eklentisinin popup'ında **Güvenlik** bölümünde aynı token'ı girin ve
+   **Erişim tokeni zorunlu kıl**'ı işaretleyin.
+3. Token tanımlıysa, yazma işlemleri (`/api/download`, `/api/captures`,
+   `DELETE`) token'ı gerektirir; token tanımlı değilse geriye uyumluluk için
+   kimlik doğrulama atlanır.
+
+Token, yalnızca aynı makinedeki yerel köprü ve eklenti arasında paylaşılmalı;
+hiçbirine söylenmemeli veya ağda paylaşılmamalıdır.
 
 ## Veri yolları
 

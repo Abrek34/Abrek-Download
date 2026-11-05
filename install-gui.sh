@@ -58,9 +58,21 @@ if ! python3 -c "import tkinter" >/dev/null 2>&1; then
     fi
 fi
 
-PYTHON_BIN="python3"
-if [ -x "$ROOT/.venv/bin/python" ] && "$ROOT/.venv/bin/python" -c "import tkinter" >/dev/null 2>&1; then
-    PYTHON_BIN="$ROOT/.venv/bin/python"
+# Sanal ortamı hazırla ve Python bağımlılıklarını yükle (requests, yt-dlp, socks).
+# install_gui.py core modüllerini içe aktardığı için requests gereklidir.
+if [ ! -x "$ROOT/.venv/bin/python" ] || ! "$ROOT/.venv/bin/python" -c "import sys" >/dev/null 2>&1; then
+    echo "Sanal ortam hazırlanıyor…"
+    if [ -d "$ROOT/.venv" ]; then
+        rm -rf "$ROOT/.venv"
+    fi
+    python3 -m venv --system-site-packages "$ROOT/.venv"
 fi
+if ! "$ROOT/.venv/bin/python" -c "import yt_dlp, requests, socks" >/dev/null 2>&1; then
+    echo "Python bağımlılıkları kuruluyor…"
+    "$ROOT/.venv/bin/python" -m pip install --upgrade pip
+    "$ROOT/.venv/bin/python" -m pip install -r "$ROOT/requirements.txt"
+fi
+
+PYTHON_BIN="$ROOT/.venv/bin/python"
 
 exec "$PYTHON_BIN" "$ROOT/install_gui.py" "$@"

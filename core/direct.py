@@ -8,6 +8,7 @@ import re
 import shutil
 import threading
 import time
+from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 from typing import Callable
 
@@ -29,6 +30,7 @@ from .errors import (
 from .i18n import t
 from .utils import (
     USER_AGENT,
+    cookies_file_path,
     filename_from_url,
     free_space,
     human_size,
@@ -146,12 +148,21 @@ class DirectDownloader:
         self.limiter = RateLimiter(int(config.get("speed_limit_kbps", 0) or 0))
 
     def _new_session(self) -> requests.Session:
-        """Yapılandırılmış proxy'yi uygulanmış yeni bir HTTP oturumu döner."""
+        """Yapılandırılmış proxy ve çerezleri uygulanmış yeni bir HTTP oturumu döner."""
         session = requests.Session()
         session.headers.update({"User-Agent": USER_AGENT})
         proxies = requests_proxies(self.config.get("proxy", ""))
         if proxies:
             session.proxies.update(proxies)
+        cookie_path = cookies_file_path(self.config.get("cookies_file", ""))
+        if cookie_path:
+            try:
+                jar = MozillaCookieJar(cookie_path)
+                jar.load(ignore_expires=True, ignore_discard=True)
+                session.cookies.update(jar)
+            except Exception:
+                # Bozuk/okunamayan çerez dosyası sessizce yok sayılır.
+                pass
         return session
 
     # ------------------------------------------------------------------ events

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -668,3 +669,289 @@ class FindCombinedStreamProbeTests(unittest.TestCase):
             "",
         )
         manager._probe_av.assert_not_called()
+
+
+class CaptureRoleTests(unittest.TestCase):
+    def test_probe_labels_are_used_as_roles(self):
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(url="https://cdn.test/a.m3u8", kind="hls", media_kind="audio")
+            ),
+            "audio",
+        )
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(
+                    url="https://cdn.test/v.m3u8",
+                    kind="hls",
+                    media_kind="manifest",
+                    media_info="804p · sessiz",
+                )
+            ),
+            "video",
+        )
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(
+                    url="https://cdn.test/a.m3u8",
+                    kind="hls",
+                    media_kind="manifest",
+                    media_info="sesli",
+                )
+            ),
+            "audio",
+        )
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(
+                    url="https://cdn.test/av.m3u8",
+                    kind="hls",
+                    media_kind="manifest",
+                    media_info="1080p · sesli",
+                )
+            ),
+            "av",
+        )
+
+    def test_content_type_and_extension_fallbacks(self):
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(url="https://cdn.test/a", kind="direct", content_type="audio/mp4")
+            ),
+            "audio",
+        )
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(url="https://cdn.test/v.mp4", kind="direct")
+            ),
+            "video",
+        )
+        self.assertEqual(
+            DownloadManager._capture_role(
+                Capture(url="https://cdn.test/v.mp4", kind="page")
+            ),
+            "",
+        )
+
+    def test_same_page_ignores_www_trailing_slash_and_fragment(self):
+        self.assertTrue(
+            DownloadManager._same_page(
+                "https://www.site.test/watch/1/#bolum",
+                "https://site.test/watch/1",
+            )
+        )
+        self.assertFalse(
+            DownloadManager._same_page(
+                "https://site.test/watch/1",
+                "https://site.test/watch/2",
+            )
+        )
+        self.assertFalse(DownloadManager._same_page("", "https://site.test/watch/1"))
+
+
+class CapturePairingTests(unittest.TestCase):
+    def make_manager(self, captures):
+        manager = DownloadManager.__new__(DownloadManager)
+        manager.lock = threading.RLock()
+        manager.captures = list(captures)
+        manager.tasks = {}
+        manager.config = {"default_quality": "best"}
+        manager._dirty = False
+        manager._snapshot_cache = None
+        manager._finish_action_done = False
+        manager._save_locked = mock.Mock()
+        manager._wake = mock.Mock()
+        manager._probe_av = mock.Mock(return_value=(False, False))
+        return manager
+
+    @staticmethod
+    def audio(capture_id="audio-1", page_url="https://site.test/watch/1"):
+        return Capture(
+            id=capture_id,
+            url="https://cdn.test/audio.m3u8",
+            page_url=page_url,
+            title="Film",
+            kind="hls",
+            media_kind="manifest",
+            media_info="sesli",
+            referer=page_url,
+        )
+
+    @staticmethod
+    def video(capture_id="video-1", page_url="https://site.test/watch/1"):
+        return Capture(
+            id=capture_id,
+            url="https://cdn.test/video.m3u8",
+            page_url=page_url,
+            title="Film",
+            kind="hls",
+            media_kind="manifest",
+            media_info="804p · sessiz",
+            referer=page_url,
+        )
+
+    def test_labeled_audio_manifest_is_found_without_probe(self):
+        audio = self.audio()
+        manager = self.make_manager([audio])
+        task = SimpleNamespace(
+            url="https://cdn.test/video.m3u8",
+            page_url="https://site.test/watch/1",
+        )
+        self.assertEqual(
+            DownloadManager._find_matching_audio(manager, task),
+            audio.url,
+        )
+        manager._probe_av.assert_not_called()
+
+    def test_labeled_video_manifest_is_found_without_probe(self):
+        video = self.video()
+        manager = self.make_manager([video])
+        task = SimpleNamespace(
+            url="https://cdn.test/audio.m3u8",
+            page_url="https://site.test/watch/1",
+        )
+        self.assertEqual(
+            DownloadManager._find_matching_video(manager, task),
+            video.url,
+        )
+        manager._probe_av.assert_not_called()
+
+    def test_selecting_audio_pairs_with_video(self):
+        audio = self.audio()
+        video = self.video()
+        manager = self.make_manager([audio, video])
+
+        task, duplicate = manager.download_capture(audio.id)
+
+        self.assertFalse(duplicate)
+        self.assertEqual(task.url, video.url)
+        self.assertEqual(task.audio_url, audio.url)
+        self.assertEqual(task.kind, "hls")
+        self.assertEqual(manager.captures, [])
+        manager._save_locked.assert_called()
+        manager._wake.set.assert_called_once()
+
+    def test_selecting_video_pairs_with_audio(self):
+        audio = self.audio()
+        video = self.video()
+        manager = self.make_manager([audio, video])
+
+        task, duplicate = manager.download_capture(video.id)
+
+        self.assertFalse(duplicate)
+        self.assertEqual(task.url, video.url)
+        self.assertEqual(task.audio_url, audio.url)
+        self.assertEqual(manager.captures, [])
+
+    def test_audio_is_not_paired_across_pages(self):
+        audio = self.audio()
+        video = self.video(page_url="https://site.test/watch/2")
+        manager = self.make_manager([audio, video])
+
+        task, _ = manager.download_capture(audio.id)
+
+        self.assertEqual(task.url, audio.url)
+        self.assertEqual(task.audio_url, "")
+        self.assertEqual([capture.id for capture in manager.captures], [video.id])
+
+    def test_download_all_creates_one_merged_task(self):
+        audio = self.audio()
+        video = self.video()
+        manager = self.make_manager([audio, video])
+
+        added, duplicates = manager.download_all_captures()
+
+        self.assertEqual((added, duplicates), (1, 0))
+        self.assertEqual(len(manager.tasks), 1)
+        task = next(iter(manager.tasks.values()))
+        self.assertEqual(task.url, video.url)
+        self.assertEqual(task.audio_url, audio.url)
+        self.assertEqual(manager.captures, [])
+
+    def test_direct_file_pair_is_selected_correctly(self):
+        audio = Capture(
+            id="audio-direct",
+            url="https://cdn.test/song.m4a",
+            page_url="https://site.test/watch/1",
+            kind="direct",
+            content_type="audio/mp4",
+        )
+        video = Capture(
+            id="video-direct",
+            url="https://cdn.test/clip.mp4",
+            page_url="https://site.test/watch/1",
+            kind="direct",
+            content_type="video/mp4",
+        )
+        manager = self.make_manager([audio, video])
+
+        task, _ = manager.download_capture(audio.id)
+
+        self.assertEqual(task.url, video.url)
+        self.assertEqual(task.audio_url, audio.url)
+        self.assertEqual(task.kind, "direct")
+
+    def test_prepare_av_pair_swaps_audio_task_to_video(self):
+        audio = self.audio()
+        video = self.video()
+        manager = self.make_manager([audio, video])
+        task = DownloadTask(
+            url=audio.url,
+            kind="hls",
+            quality="best",
+            page_url="https://site.test/watch/1",
+        )
+
+        manager._prepare_av_pair(task)
+
+        self.assertEqual(task.url, video.url)
+        self.assertEqual(task.audio_url, audio.url)
+        self.assertEqual(task.kind, "hls")
+
+    def test_prepare_av_pair_keeps_audio_quality_task_untouched(self):
+        audio = self.audio()
+        video = self.video()
+        manager = self.make_manager([audio, video])
+        task = DownloadTask(
+            url=audio.url,
+            kind="hls",
+            quality="audio",
+            page_url="https://site.test/watch/1",
+        )
+
+        manager._prepare_av_pair(task)
+
+        self.assertEqual(task.url, audio.url)
+        self.assertEqual(task.audio_url, "")
+
+
+class VideoOnlyDownloadTests(unittest.TestCase):
+    def test_video_only_command_uses_video_stream_without_audio(self):
+        from core.ytdlp import YtDlpDownloader
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = SimpleNamespace(
+                download_dir=Path(directory),
+                get=lambda _key, default=None: default,
+            )
+            task = SimpleNamespace(
+                id="video-task",
+                quality="best",
+                url="https://cdn.test/video.m3u8",
+                referer="",
+            )
+            with mock.patch("core.ytdlp.PARTS_DIR", Path(directory) / "parts"):
+                downloader = YtDlpDownloader(
+                    task,
+                    config,
+                    lambda *_args: None,
+                    lambda *_args: None,
+                    video_only=True,
+                )
+                command = downloader._build_download_command()
+
+        self.assertIn("bv*/b", command)
+        self.assertTrue(
+            any(item.endswith("%(title).150B [%(id)s].video.%(ext)s") for item in command)
+        )
+        self.assertNotIn("--merge-output-format", command)

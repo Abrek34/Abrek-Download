@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from tkinter import messagebox
 
@@ -113,7 +114,25 @@ class CapturesPage(tk.Frame):
     def download_all(self) -> None:
         if not self._captures:
             return
-        added, duplicates = self.app.manager.download_all_captures()
+        self.download_all_button.configure(state="disabled")
+        self.clear_button.configure(state="disabled")
+
+        def worker() -> None:
+            try:
+                added, duplicates = self.app.manager.download_all_captures()
+            except Exception as exc:
+                message = t("toast.download_failed", error=exc)
+                self.app.post(lambda: self.app.toast(message, "error"))
+                self.app.post(self.app.refresh_now)
+                return
+            self.app.post(lambda: self._download_all_done(added, duplicates))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _download_all_done(self, added: int, duplicates: int) -> None:
+        if self._captures:
+            self.download_all_button.configure(state="normal")
+            self.clear_button.configure(state="normal")
         if added:
             self.app.toast(t("captures.toast.download_all", count=added), "success")
             self.app.show_page("downloads")

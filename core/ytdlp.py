@@ -223,6 +223,7 @@ class YtDlpDownloader:
         log_cb: LogCallback | None = None,
         metadata_cb: MetadataCallback | None = None,
         audio_only: bool = False,
+        video_only: bool = False,
     ):
         self.task = task
         self.config = config
@@ -231,6 +232,7 @@ class YtDlpDownloader:
         self.log_cb = log_cb or (lambda _line: None)
         self.metadata_cb = metadata_cb or (lambda _meta: None)
         self.audio_only = audio_only
+        self.video_only = video_only
 
         self.pause_event = threading.Event()
         self.cancel_event = threading.Event()
@@ -421,6 +423,10 @@ class YtDlpDownloader:
             # Aynı video kimliğiyle indirilen ses dosyası video dosyasının
             # üzerine yazmasın diye ayrı bir ad kullan.
             template = str(output_dir / "%(title).150B [%(id)s].audio.%(ext)s")
+        elif self.video_only:
+            # Birleştirme için indirilen görüntü akışı da ayrı adlansın;
+            # böylece aynı kimliği taşıyan ses dosyasıyla karışmaz.
+            template = str(output_dir / "%(title).150B [%(id)s].video.%(ext)s")
         try:
             fragments = max(1, min(8, int(self.config.get("connections", 4) or 4)))
         except (TypeError, ValueError):
@@ -464,6 +470,10 @@ class YtDlpDownloader:
         if self.audio_only:
             # Birleştirme için yeniden kodlamadan ses akışının kendisini al.
             cmd += ["--format", "ba[ext=m4a]/ba/b"]
+        elif self.video_only:
+            # Ayrı ses akışıyla birleştirilecek görüntü parçası: yt-dlp'nin
+            # ses akışı aramasına gerek yok, en iyi video taşıyan biçim yeter.
+            cmd += ["--format", "bv*/b"]
         else:
             cmd += ["--format", build_format_selector(quality)]
             if quality == "audio":
@@ -556,11 +566,15 @@ class YtDlpDownloader:
         # videonun kimliğini taşıyan dosyalara bak.
         try:
             output_dir = Path(self.config.download_dir)
-            allowed = (
-                {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", ".mp4"}
-                if self.audio_only
-                else {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".opus"}
-            )
+            if getattr(self, "audio_only", False):
+                allowed = {
+                    ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac",
+                    ".webm", ".mp4",
+                }
+            elif getattr(self, "video_only", False):
+                allowed = {".mp4", ".mkv", ".webm", ".mov", ".ts"}
+            else:
+                allowed = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".opus"}
             if not self._video_id:
                 return ""
             id_marker = f"[{self._video_id}]"
@@ -571,7 +585,8 @@ class YtDlpDownloader:
                 and id_marker in path.name
                 and path.suffix.lower() in allowed
                 and path.stat().st_mtime >= self._start_time - 5
-                and (not self.audio_only or ".audio." in path.name)
+                and (not getattr(self, "audio_only", False) or ".audio." in path.name)
+                and (not getattr(self, "video_only", False) or ".video." in path.name)
             ]
             files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
             if files:

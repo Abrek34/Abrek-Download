@@ -1,5 +1,22 @@
 # Sürüm Notları
 
+## 1.12.1 — 2026-11-05 (test)
+
+### Video yakalama ve ses/görüntü birleştirme
+
+- **Ayrı ses/görüntü akışları otomatik birleştirilir:** HLS/DASH/Direct akışları
+  aynı sayfada yakalandığında `SES (sadece)` ve `GÖRÜNTÜ (sessiz)` akışları
+  tek dosyada birleştirilir. İndirme seçimi ses-only yapılsa bile görüntü
+  akışı otomatik bulunur ve birleştirilir.
+- **Net yakalama etiketleri:** Ses-only akışlar `SES (SADECE)`, görüntü-only
+  akışlar `GÖRÜNTÜ ... · sessiz`, ses+görüntü içeren akışlar `SES + GÖRÜNTÜ`
+  olarak gösterilir; eski `sesli/sessiz` etiketleri daha açık hâle getirildi.
+- **Doğrudan dosya birleştirme:** Direct `.mp4` + `.m4a` gibi ayrı dosyalar da
+  ffmpeg ile tek dosyada birleştirilir.
+- **Daha güvenilir eşleştirme:** yt-dlp'nin HLS medya listelerinde ses ve
+  görüntüyü yanlış raporlaması durumunda uygulamanın kendi probe etiketleri
+  kullanılır.
+
 ## 1.12.0 — 2026-11-05
 
 ### Ağ ve oturum desteği

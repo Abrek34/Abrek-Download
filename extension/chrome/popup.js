@@ -7,7 +7,7 @@ const API = 'http://127.0.0.1:8765';
 const state = {
   tab: null,
   record: { pageUrl: '', pageTitle: '', items: [] },
-  settings: { autoSend: true, quality: 'best' },
+  settings: { autoSend: true, quality: 'best', requireToken: false, apiToken: '' },
   online: false,
   busy: false,
 };
@@ -39,8 +39,12 @@ async function fetchJson(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
+    const token = state.settings.apiToken;
+    const headers = { ...options.headers };
+    if (token) headers['X-Abrek-Token'] = token;
     const response = await fetch(url, {
       ...options,
+      headers,
       signal: controller.signal,
       cache: 'no-store',
       credentials: 'omit',
@@ -258,6 +262,8 @@ function render() {
 
   el('quality').value = state.settings.quality || 'best';
   el('autoSend').checked = state.settings.autoSend !== false;
+  if (el('requireToken')) el('requireToken').checked = state.settings.requireToken === true;
+  if (el('apiToken')) el('apiToken').value = state.settings.apiToken || '';
   updateButtons();
 }
 
@@ -418,7 +424,7 @@ async function init() {
 
   const key = `tab:${state.tab.id}`;
   const data = await call(ext.storage.local.get.bind(ext.storage.local), ['settings', key]);
-  state.settings = Object.assign({ autoSend: true, quality: 'best' }, data.settings || {});
+  state.settings = Object.assign({ autoSend: true, quality: 'best', requireToken: false, apiToken: '' }, data.settings || {});
   const stored = data[key];
   state.record = stored && typeof stored === 'object'
     ? {
@@ -461,6 +467,16 @@ el('autoSend').addEventListener('change', async (event) => {
   }
 });
 
+el('requireToken').addEventListener('change', async (event) => {
+  state.settings.requireToken = event.target.checked;
+  await saveSettings();
+});
+
+el('apiToken').addEventListener('change', async (event) => {
+  state.settings.apiToken = event.target.value.trim();
+  await saveSettings();
+});
+
 ext.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !state.tab) return;
   const key = `tab:${state.tab.id}`;
@@ -476,7 +492,7 @@ ext.storage.onChanged.addListener((changes, area) => {
     render();
   }
   if (changes.settings) {
-    state.settings = Object.assign({ autoSend: true, quality: 'best' }, changes.settings.newValue || {});
+    state.settings = Object.assign({ autoSend: true, quality: 'best', requireToken: false, apiToken: '' }, changes.settings.newValue || {});
     render();
   }
 });

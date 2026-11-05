@@ -319,5 +319,8 @@
   "settings.history_limit": "History limit",
   "settings.history_limit_hint": "Maximum number of finished/failed tasks kept in the queue. 0 means unlimited; downloaded files are never deleted.",
   "settings.err.proxy_scheme": "Proxy address must include a scheme such as http://, https:// or socks5://.",
-  "settings.err.cookies_file": "The selected cookies.txt file was not found."
+  "settings.err.cookies_file": "The selected cookies.txt file was not found.",
+  "settings.api_token": "Access token",
+  "settings.api_token_hint": "Optional. Enter a token to protect access to the local bridge. Match it with the 'Require access token' setting in the browser extension. At least 8 characters recommended.",
+  "settings.err.api_token_short": "Token must be at least 8 characters."
 }

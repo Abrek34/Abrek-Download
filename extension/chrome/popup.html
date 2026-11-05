@@ -60,6 +60,15 @@
     <button id="sendAll" class="secondary" type="button">Tümünü gönder</button>
   </footer>
 
+  <section class="page-card" style="margin-top: 10px;">
+    <div class="eyebrow">GÜVENLİK</div>
+    <label class="toggle" style="cursor: pointer; gap: 7px; font-size: 11px; color: var(--muted); user-select: none;">
+      <input type="checkbox" id="requireToken">
+      <span>Erişim tokeni zorunlu kıl</span>
+    </label>
+    <input type="text" id="apiToken" placeholder="Uygulama ayarlarından token girin" style="width: 100%; margin-top: 6px; background: #0f131c; color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 11.5px; outline: none;">
+  </section>
+
   <div id="toast" class="toast" role="status"></div>
   <script src="popup.js"></script>
 </body>

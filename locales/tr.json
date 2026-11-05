@@ -319,5 +319,8 @@
   "settings.history_limit": "Geçmiş sınırı",
   "settings.history_limit_hint": "Kuyrukta tutulacak en fazla tamamlanmış/hatalı görev sayısı. 0 sınırsız demektir; indirilen dosyalar silinmez.",
   "settings.err.proxy_scheme": "Proxy adresi http://, https:// veya socks5:// gibi bir şema içermeli.",
-  "settings.err.cookies_file": "Seçilen cookies.txt dosyası bulunamadı."
+  "settings.err.cookies_file": "Seçilen cookies.txt dosyası bulunamadı.",
+  "settings.api_token": "Erişim tokeni",
+  "settings.api_token_hint": "İsteğe bağlı. Yerel köprüye erişimi korumak için bir token girin. Aynı token'ı tarayıcı eklentisindeki 'Erişim tokeni zorunlu kıl' ayarıyla eşitleyin. En az 8 karakter önerilir.",
+  "settings.err.api_token_short": "Token en az 8 karakter olmalıdır."
 }

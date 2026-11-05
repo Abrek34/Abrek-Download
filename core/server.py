@@ -41,14 +41,26 @@ def host_allowed(value: str | None) -> bool:
     return value.strip().lower() in ALLOWED_HOSTS
 
 
-def origin_allowed(origin: str | None) -> bool:
+def origin_allowed(origin: str | None, host: str | None = None) -> bool:
     """Yalnızca tarayıcı eklentisi ve yerel panodan gelen istekleri kabul et.
 
-    ``Origin: null`` (sandbox edilmiş iframe, file:// vb.) reddedilir; aksi
-    halde herhangi bir site bu köprü üzerinden indirme başlatabilirdi.
+    ``Origin`` başlığı yoksa veya ``null`` ise istek reddedilir; böylece
+    harici siteler/curl gibi kaynaklar köprüyü kullanamaz. ``Origin`` yoksa
+    ancak ``Host`` localhost/127.0.0.1 ise aynı-origin olduğu kabul edilir.
     """
     if not origin:
-        return True
+        # Origin başlığı yoksa yalnızca yerel (localhost) sunucudan gelen
+        # aynı-origin isteğe izin ver.
+        if host:
+            host = host.strip().lower()
+            if host in {
+                API_HOST,
+                "localhost",
+                f"{API_HOST}:{API_PORT}",
+                f"localhost:{API_PORT}",
+            }:
+                return True
+        return False
     origin = origin.strip()
     if not origin or origin == "null":
         return False
@@ -83,14 +95,29 @@ class ApiHandler(BaseHTTPRequestHandler):
     def _origin(self) -> str | None:
         return self.headers.get("Origin")
 
-    def _origin_allowed(self, origin: str | None) -> bool:
-        return origin_allowed(origin)
+    def _origin_allowed(self, origin: str | None, host: str | None = None) -> bool:
+        return origin_allowed(origin, host)
+
+    def _token_allowed(self) -> bool:
+        """Yapılandırılmışsa ``X-Abrek-Token`` başlığını doğrular.
+
+        ``api_token`` ayarı boşsa kimlik doğrulama zorunlu değildir (geriye
+        uyumluluk için). Ayarlandıysa yazma işlemleri bu token'ı gerektirir.
+        """
+        config = getattr(self.manager, "config", None)
+        token = ""
+        if config is not None and hasattr(config, "get"):
+            token = str(config.get("api_token", "") or "").strip()
+        if not token:
+            return True
+        provided = self.headers.get("X-Abrek-Token", "").strip()
+        return bool(provided) and provided == token
 
     def _cors_headers(self) -> dict[str, str]:
         origin = self._origin()
         headers = {
             "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Headers": "Content-Type, X-Abrek-Token",
             "Access-Control-Max-Age": "86400",
             "Vary": "Origin",
         }
@@ -99,8 +126,6 @@ class ApiHandler(BaseHTTPRequestHandler):
             headers["Access-Control-Allow-Private-Network"] = "true"
         if origin and origin_allowed(origin):
             headers["Access-Control-Allow-Origin"] = origin
-        elif not origin:
-            headers["Access-Control-Allow-Origin"] = "*"
         return headers
 
     @staticmethod
@@ -150,7 +175,8 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def _check_origin(self) -> bool:
         origin = self._origin()
-        if self._origin_allowed(origin):
+        host = self.headers.get("Host")
+        if self._origin_allowed(origin, host):
             return True
         self._send_json(403, {"ok": False, "error": "Bu kaynaktan erişim izinli değil."})
         return False
@@ -226,6 +252,9 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if not self._check_host() or not self._check_origin():
+            return
+        if not self._token_allowed():
+            self._send_json(403, {"ok": False, "error": "Geçersiz veya eksik erişim tokeni."})
             return
         path = urlparse(self.path).path.rstrip("/")
         payload = self._read_json()
@@ -321,6 +350,9 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         if not self._check_host() or not self._check_origin():
+            return
+        if not self._token_allowed():
+            self._send_json(403, {"ok": False, "error": "Geçersiz veya eksik erişim tokeni."})
             return
         path = urlparse(self.path).path.rstrip("/")
         if path == "/api/captures":
