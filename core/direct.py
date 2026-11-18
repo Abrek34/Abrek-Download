@@ -916,6 +916,10 @@ class DirectDownloader:
     def _merge_parts(self) -> str:
         self.status_cb("processing", t("task.detail.merging"))
         output_dir = self._output_dir()
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
         final_path = unique_path(output_dir, self.filename or f"video-{self.task.id}.mp4")
         copy_required = len(self.segments) > 1 or not self._same_device(
             self._part_path(0), output_dir

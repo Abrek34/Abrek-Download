@@ -435,15 +435,18 @@ class YtDlpDownloader:
         except OSError:
             pass
 
-        template = str(output_dir / "%(title).150B [%(id)s].%(ext)s")
+        # Hem title hem id kısaltılmalı: bazı siteler (örn. vidmixi.com)
+        # başlık/kimlik olarak uzun bir token verir; tam id + uzun title
+        # 255 bayt sınırını aşar ve "File name too long"/ENOENT olur.
+        template = str(output_dir / "%(title).100B [%(id).40B].%(ext)s")
         if self.audio_only:
             # Aynı video kimliğiyle indirilen ses dosyası video dosyasının
             # üzerine yazmasın diye ayrı bir ad kullan.
-            template = str(output_dir / "%(title).150B [%(id)s].audio.%(ext)s")
+            template = str(output_dir / "%(title).100B [%(id).40B].audio.%(ext)s")
         elif self.video_only:
             # Birleştirme için indirilen görüntü akışı da ayrı adlansın;
             # böylece aynı kimliği taşıyan ses dosyasıyla karışmaz.
-            template = str(output_dir / "%(title).150B [%(id)s].video.%(ext)s")
+            template = str(output_dir / "%(title).100B [%(id).40B].video.%(ext)s")
         try:
             fragments = max(1, min(8, int(self.config.get("connections", 4) or 4)))
         except (TypeError, ValueError):
@@ -480,6 +483,9 @@ class YtDlpDownloader:
             str(fragments),
             "--trim-filenames",
             "180",
+            # Başlıklardaki '/', ':' gibi dosya yolu parçalayıcı karakterleri
+            # alt dizin oluşturmasın (ENOENT'ye yol açar). ASCII'ye sınırla.
+            "--restrict-filenames",
         ]
         if self._playlist_items:
             cmd += ["--playlist-items", str(self._playlist_items)]

@@ -304,7 +304,7 @@ class AudioOnlyDownloadTests(unittest.TestCase):
 
         self.assertIn("ba[ext=m4a]/ba/b", command)
         self.assertTrue(
-            any(item.endswith("%(title).150B [%(id)s].audio.%(ext)s") for item in command)
+            any(item.endswith("%(title).100B [%(id).40B].audio.%(ext)s") for item in command)
         )
         self.assertNotIn("--extract-audio", command)
         self.assertNotIn("--write-subs", command)
@@ -952,6 +952,6 @@ class VideoOnlyDownloadTests(unittest.TestCase):
 
         self.assertIn("bv*/b", command)
         self.assertTrue(
-            any(item.endswith("%(title).150B [%(id)s].video.%(ext)s") for item in command)
+            any(item.endswith("%(title).100B [%(id).40B].video.%(ext)s") for item in command)
         )
         self.assertNotIn("--merge-output-format", command)
