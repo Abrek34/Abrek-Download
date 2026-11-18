@@ -306,7 +306,7 @@ class DownloadManager:
     def _save_locked(self, throttle: bool = False) -> None:
         if self._shutting_down:
             throttle = False
-        if throttle and time.monotonic() - self._last_save < 6.0:
+        if throttle and time.monotonic() - self._last_save < 3.0:
             return
         if not self._dirty and not self._shutting_down:
             return
