@@ -18,6 +18,7 @@ from core.installer import (
     install_script_args,
     launch_command,
     manual_install_command,
+    update_command,
     menu_entry_path,
 )
 
@@ -89,6 +90,16 @@ class InstallerCommandTests(unittest.TestCase):
         command = launch_command()
         self.assertEqual(command[0], "bash")
         self.assertTrue(command[1].endswith("baslat.sh"))
+
+    def test_update_command_shape(self):
+        command = update_command()
+        self.assertEqual(command[:2], ["bash", "-lc"])
+        joined = command[-1]
+        self.assertIn("guncelle.sh", joined)
+        # Proje bir git deposuysa pull adımı eklenir.
+        if (PROJECT_DIR / ".git").exists():
+            self.assertIn("pull", joined)
+            self.assertIn("--ff-only", joined)
 
     def test_manual_install_command(self):
         self.assertIn("yt-dlp", manual_install_command(["yt-dlp"]))

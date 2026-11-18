@@ -31,6 +31,7 @@ from core.installer import (
     js_runtime_install_command,
     launch_command,
     manual_install_command,
+    update_command,
 )
 from installer_strings import tr
 from ui.theme import (
@@ -407,6 +408,16 @@ class InstallerApp:
         )
         self.launch_button.pack(side="right", padx=6)
 
+        self.update_button = make_button(
+            actions,
+            tr("button.update"),
+            self._update,
+            kind="ghost",
+            size=9,
+            bg=BG,
+        )
+        self.update_button.pack(side="right", padx=6)
+
         style = ttk.Style(self.root)
         style.configure(
             "Installer.Horizontal.TProgressbar",
@@ -511,6 +522,7 @@ class InstallerApp:
         for widget in (
             self.install_button,
             self.uninstall_button,
+            self.update_button,
             self.refresh_button,
             self.menu_check,
             self.desktop_check,
@@ -599,6 +611,17 @@ class InstallerApp:
             "uninstall",
             tr("button.uninstall"),
         )
+
+    def _update(self) -> None:
+        if self._busy:
+            return
+        if not messagebox.askyesno(
+            tr("msg.update_title"), tr("msg.update")
+        ):
+            return
+        command = update_command()
+        self._log(tr("log.update"), "cmd")
+        self._run(command, "update", tr("button.update"))
 
     def _launch(self) -> None:
         if is_app_running():
@@ -720,6 +743,13 @@ class InstallerApp:
             self._log(tr("log.uninstall_done"), "ok")
             self.refresh()
             messagebox.showinfo(tr("msg.uninstall_done_title"), tr("msg.uninstall_done"))
+        elif action == "update":
+            self._log(tr("log.update_done"), "ok")
+            self.refresh()
+            messagebox.showinfo(
+                tr("msg.update_done_title"),
+                tr("msg.update_done", version=VERSION),
+            )
 
     # ------------------------------------------------------------------ queue
     def _poll_queue(self) -> None:

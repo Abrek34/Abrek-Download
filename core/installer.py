@@ -233,6 +233,25 @@ def launch_command(project_dir: Path = PROJECT_DIR) -> list[str]:
     return ["bash", str(project_dir / "baslat.sh")]
 
 
+def update_command(project_dir: Path = PROJECT_DIR) -> list[str]:
+    """Tek adımda güncelleme komutu: git pull + bağımlılık/yt-dlp güncelleme.
+
+    Proje git deposu değilse ``guncelle.sh`` tek başına yeterlidir; git adımı
+    ``|| true`` ile hata vermeden atlanır.
+    """
+    project_dir = Path(project_dir)
+    git = shutil.which("git")
+    steps: list[str] = []
+    if git and (project_dir / ".git").exists():
+        steps.append(
+            f"{shlex.quote(git)} -C {shlex.quote(str(project_dir))} pull --ff-only"
+        )
+    steps.append(f"bash {shlex.quote(str(project_dir / 'guncelle.sh'))}")
+    # Tek bir kabuk süreci çalıştır; böylece GUI çıktıyı tek komut olarak okur
+    # ve git adımı ile bağımlılık güncellemesi sırayla uygulanır.
+    return ["bash", "-lc", " && ".join(steps)]
+
+
 def is_app_running(host: str = API_HOST, port: int = API_PORT) -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.25):
