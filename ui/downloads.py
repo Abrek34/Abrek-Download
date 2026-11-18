@@ -73,6 +73,7 @@ class DownloadsPage(tk.Frame):
     def _build(self) -> None:
         self._build_add_card()
         self._build_filter_bar()
+        self._build_stats_bar()
 
         self.scroll = ScrollFrame(self)
         self.scroll.pack(fill="both", expand=True, pady=(14, 0))
@@ -528,6 +529,12 @@ class DownloadsPage(tk.Frame):
     def on_show(self) -> None:
         self.sync_default_quality()
 
+    def _build_stats_bar(self) -> None:
+        bar = tk.Frame(self, bg=BG)
+        bar.pack(fill="x", pady=(8, 0))
+        self.stats_label = tk.Label(bar, text="", bg=BG, fg=MUTED, font=font(8), anchor="w")
+        self.stats_label.pack(side="left")
+
     def _on_search_change(self) -> None:
         self._search_query = self.search_entry.value().strip()
         self.update_tasks(self._tasks)
@@ -547,6 +554,17 @@ class DownloadsPage(tk.Frame):
     def update_snapshot(self, snapshot: dict) -> None:
         self._tasks = list(snapshot.get("tasks") or [])
         self.update_tasks(self._tasks)
+        try:
+            stats = self.app.manager.stats()
+            completed = stats.get("completed", 0)
+            errors = stats.get("errors", 0)
+            total_dl = sum(int(t.get("downloaded") or 0) for t in self._tasks)
+            from core.utils import human_size, human_speed
+            self.stats_label.configure(
+                text=f"Tamamlanan: {completed}  ·  Hatalı: {errors}  ·  İndirilen: {human_size(total_dl)}  ·  Hız: {human_speed(stats.get('speed', 0))}"
+            )
+        except Exception:
+            pass
 
     def update_tasks(self, tasks: list[dict]) -> None:
         counts = {

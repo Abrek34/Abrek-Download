@@ -486,9 +486,12 @@ class DirectDownloader:
                 shutil.rmtree(self.part_dir, ignore_errors=True)
             self.part_dir.mkdir(parents=True, exist_ok=True)
             if self.ranges_supported and self.total >= 1024 * 1024:
-                count = int(self.config.get("connections", 4) or 4)
-                count = max(1, min(count, max(1, self.total // (2 * 1024 * 1024))))
-                count = min(count, 8)
+                configured = int(self.config.get("connections", 4) or 4)
+                # Adaptif: büyük dosyalarda daha fazla parça (daha fazla paralellik),
+                # küçük dosyalarda gereksiz parçalama yapma. Hızlı bağlantıda
+                # configured değeri üst sınır olarak kullanılır.
+                by_size = max(1, self.total // (1 * 1024 * 1024))
+                count = max(1, min(configured, by_size, 16))
             else:
                 count = 1
             self.segments = plan_segments(self.total, count)
@@ -938,6 +941,29 @@ class DirectDownloader:
                     raise error_from_os(exc, "Birleştirme başarısız") from exc
                 raise
         shutil.rmtree(self.part_dir, ignore_errors=True)
+        # Bütünlük: boyut + (isteğe bağlı) SHA-256 özeti.
+        try:
+            if self.total and os.path.getsize(final_path) != self.total:
+                raise TransientDownloadError(
+                    "Birleştirilen dosya boyutu beklenenle eşleşmiyor.",
+                    code="size_mismatch",
+                )
+        except OSError:
+            pass
+        if bool(self.config.get("verify_integrity", True)):
+            try:
+                import hashlib
+
+                h = hashlib.sha256()
+                with open(final_path, "rb") as fh:
+                    for block in iter(lambda: fh.read(1024 * 1024), b""):
+                        h.update(block)
+                digest = h.hexdigest()
+                self.log_cb(f"SHA-256: {digest}")
+                sidecar = Path(str(final_path) + ".sha256")
+                sidecar.write_text(f"{digest}  {Path(final_path).name}\n", encoding="utf-8")
+            except Exception as exc:
+                self.log_cb(f"Bütünlük özeti hesaplanamadı: {exc}")
         return str(final_path)
 
     # --------------------------------------------------------------------- run

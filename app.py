@@ -665,6 +665,22 @@ class VideoAvciApp(tk.Tk):
                     )
                 except Exception:
                     log.debug("İndirme bildirimi gönderilemedi", exc_info=True)
+                if self.cfg.get("notify_sound", True):
+                    try:
+                        sound = "/usr/share/sounds/freedesktop/stereo/complete.oga"
+                        import os as _os
+                        if not _os.path.exists(sound):
+                            sound = "/usr/share/sounds/freedesktop/stereo/message.oga"
+                        for player in ("paplay", "pw-play", "aplay"):
+                            if shutil.which(player):
+                                subprocess.Popen(
+                                    [player, sound],
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                )
+                                break
+                    except Exception:
+                        log.debug("Ses bildirimi gönderilemedi", exc_info=True)
             elif status == "error":
                 failed_ids.add(task_id)
                 if task_id in self._notified_failed:

@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.12.2"
+VERSION = "1.12.3"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -98,12 +98,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_retry_limit": 2,
     "notify_captures": True,
     "notify_downloads": True,
+    "notify_sound": True,
     "capture_paused": False,
     "window_geometry": "",
     "theme": "dark",
     "language": "tr",
     "watch_clipboard": False,
     "download_subtitles": False,
+    "verify_integrity": True,
     "subtitle_langs": "tr,en",
     "shutdown_on_finish": "none",  # none | shutdown | suspend
     "api_token": "",  # Yerel köprüye erişim için isteğe bağlı eşleştirme tokeni
@@ -180,9 +182,11 @@ class Config:
             "auto_retry",
             "notify_captures",
             "notify_downloads",
+            "notify_sound",
             "capture_paused",
             "watch_clipboard",
             "download_subtitles",
+            "verify_integrity",
         ):
             self.data[key] = _coerce_bool(self.data.get(key), bool(DEFAULT_CONFIG[key]))
 
