@@ -151,6 +151,12 @@ class DirectDownloader:
         """Yapılandırılmış proxy ve çerezleri uygulanmış yeni bir HTTP oturumu döner."""
         session = requests.Session()
         session.headers.update({"User-Agent": USER_AGENT})
+        # SSL doğrulama varsayılan açık; kullanıcı güvendiği bir kaynak için
+        # ayarlardan kapatırsa self-signed sertifikalar kabul edilir.
+        try:
+            session.verify = bool(self.config.get("ssl_verify", True))
+        except Exception:
+            session.verify = True
         proxies = requests_proxies(self.config.get("proxy", ""))
         if proxies:
             session.proxies.update(proxies)

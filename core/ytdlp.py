@@ -82,6 +82,19 @@ def ytdlp_base_command() -> list[str]:
     return [sys.executable, "-m", "yt_dlp", "--ignore-config"]
 
 
+def ssl_verify_args(config) -> list[str]:
+    """SSL doğrulama kapalıysa yt-dlp'ye güvenli olmayan bayrağı ekler.
+
+    Yalnızca kullanıcı ayarlardan ``ssl_verify`` değerini açıkça kapatırsa
+    eklenir; varsayılan olarak sertifika doğrulaması açıktır.
+    """
+    try:
+        verify = bool(config.get("ssl_verify", True))
+    except Exception:
+        verify = True
+    return [] if verify else ["--no-check-certificates"]
+
+
 def youtube_extra_args(url: str) -> list[str]:
     """YouTube için JS challenge çözücü bileşenlerini etkinleştirir."""
     if is_youtube_url(url):
@@ -150,6 +163,7 @@ def extract_playlist_info(
     referer: str = "",
     cookies_file: str = "",
     proxy: str = "",
+    ssl_verify: bool = True,
 ) -> dict | None:
     """Verilen URL'nin oynatma listesi olup olmadığını ve içindeki videoları döner."""
     cmd = ytdlp_base_command() + [
@@ -159,6 +173,8 @@ def extract_playlist_info(
         "--socket-timeout", "20",
     ]
     cmd += youtube_extra_args(url)
+    if not ssl_verify:
+        cmd += ["--no-check-certificates"]
     cookie_path = cookies_file_path(cookies_file)
     if cookie_path:
         cmd += ["--cookies", cookie_path]
@@ -322,6 +338,7 @@ class YtDlpDownloader:
             "3",
         ]
         cmd += youtube_extra_args(self.task.url)
+        cmd += ssl_verify_args(self.config)
         cmd += self._cookies_args()
         cmd += self._proxy_args()
         cmd += self._header_args()
@@ -487,6 +504,7 @@ class YtDlpDownloader:
         if limit > 0:
             cmd += ["--limit-rate", f"{limit}K"]
         cmd += youtube_extra_args(self.task.url)
+        cmd += ssl_verify_args(self.config)
         cmd += self._cookies_args()
         cmd += self._proxy_args()
         cmd += self._header_args()

@@ -67,6 +67,7 @@ from .ytdlp import (
     DownloadCanceled as YtCanceled,
     DownloadPaused as YtPaused,
     YtDlpDownloader,
+    ssl_verify_args,
     youtube_extra_args,
     ytdlp_base_command,
     ytdlp_version,
@@ -866,6 +867,7 @@ class DownloadManager:
             "--dump-single-json",
         ]
         cmd += youtube_extra_args(url)
+        cmd += ssl_verify_args(getattr(self, "config", None))
         if referer:
             cmd += ["--add-header", f"Referer:{referer}"]
         cmd += [url]
@@ -1606,6 +1608,7 @@ class DownloadManager:
             USER_AGENT,
         ]
         cmd += youtube_extra_args(url)
+        cmd += ssl_verify_args(getattr(self, "config", None))
         if referer:
             cmd += ["--add-header", f"Referer:{referer}"]
         cmd.append(url)
@@ -2409,6 +2412,7 @@ class DownloadManager:
             cookies_browser=cookies,
             cookies_file=str(self.config.get("cookies_file", "") or ""),
             proxy=str(self.config.get("proxy", "") or ""),
+            ssl_verify=bool(self.config.get("ssl_verify", True)),
         )
 
     def add_playlist_items(self, items: list[dict], quality: str | None = None) -> int:

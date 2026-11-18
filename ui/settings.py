@@ -334,6 +334,24 @@ class SettingsPage(tk.Frame):
             style="TCheckbutton",
         ).pack(fill="x", pady=(0, 6))
 
+        self.ssl_verify_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            body,
+            text=t("settings.ssl_verify"),
+            variable=self.ssl_verify_var,
+            style="TCheckbutton",
+        ).pack(fill="x", pady=(0, 3))
+        tk.Label(
+            body,
+            text=t("settings.ssl_verify_hint"),
+            bg=CARD,
+            fg=MUTED,
+            font=font(8),
+            anchor="w",
+            justify="left",
+            wraplength=720,
+        ).pack(fill="x", padx=(24, 0), pady=(0, 6))
+
         self.subtitles_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             body,
@@ -499,6 +517,7 @@ class SettingsPage(tk.Frame):
         self.capture_paused_var.set(bool(config.get("capture_paused", False)))
         self.clipboard_var.set(bool(config.get("watch_clipboard", False)))
         self.subtitles_var.set(bool(config.get("download_subtitles", False)))
+        self.ssl_verify_var.set(bool(config.get("ssl_verify", True)))
         finish_action = str(config.get("shutdown_on_finish", "none") or "none")
         finish_map = {code: label for label, code in get_finish_options()}
         self.finish_combo.set(finish_map.get(finish_action, t("settings.finish_action.none")))
@@ -656,6 +675,7 @@ class SettingsPage(tk.Frame):
                 "capture_paused": bool(self.capture_paused_var.get()),
                 "watch_clipboard": bool(self.clipboard_var.get()),
                 "download_subtitles": bool(self.subtitles_var.get()),
+                "ssl_verify": bool(self.ssl_verify_var.get()),
                 "shutdown_on_finish": finish_action,
                 "theme": theme_val,
             }

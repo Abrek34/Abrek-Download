@@ -12,7 +12,7 @@ from .utils import atomic_write_json, load_json
 
 APP_NAME = "Abrek Download"
 APP_SLUG = "videoavci"
-VERSION = "1.12.3"
+VERSION = "1.12.4"
 
 if getattr(sys, "frozen", False):
     PROJECT_DIR = Path(sys._MEIPASS)
@@ -106,6 +106,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "watch_clipboard": False,
     "download_subtitles": False,
     "verify_integrity": True,
+    # Kendi imzalı sertifika kullanan (genelde yerel/özel) CDN'ler için.
+    # Varsayılan True (güvenli). Kapatmak yalnızca güvenilen kaynaklarda kullanılmalı.
+    "ssl_verify": True,
     "subtitle_langs": "tr,en",
     "shutdown_on_finish": "none",  # none | shutdown | suspend
     "api_token": "",  # Yerel köprüye erişim için isteğe bağlı eşleştirme tokeni
@@ -187,6 +190,7 @@ class Config:
             "watch_clipboard",
             "download_subtitles",
             "verify_integrity",
+            "ssl_verify",
         ):
             self.data[key] = _coerce_bool(self.data.get(key), bool(DEFAULT_CONFIG[key]))
 

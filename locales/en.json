@@ -335,5 +335,7 @@
   "downloads.action.move_down": "↓",
   "downloads.sort.created": "Date",
   "downloads.sort.size": "Size",
-  "downloads.sort.title": "Name"
+  "downloads.sort.title": "Name",
+  "settings.ssl_verify": "Verify SSL certificates",
+  "settings.ssl_verify_hint": "If you get 'unable to download video data: CERTIFICATE_VERIFY_FAILED' on sites with self-signed certificates, turn this off. Only disable for trusted sources."
 }

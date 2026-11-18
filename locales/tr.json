@@ -335,5 +335,7 @@
   "downloads.action.move_down": "↓",
   "downloads.sort.created": "Tarih",
   "downloads.sort.size": "Boyut",
-  "downloads.sort.title": "Ad"
+  "downloads.sort.title": "Ad",
+  "settings.ssl_verify": "SSL sertifikalarını doğrula",
+  "settings.ssl_verify_hint": "Kendi imzalı sertifika kullanan sitelerde 'unable to download video data: CERTIFICATE_VERIFY_FAILED' hatası alırsanız bunu kapatın. Yalnızca güvendiğiniz kaynaklarda kapatın."
 }
