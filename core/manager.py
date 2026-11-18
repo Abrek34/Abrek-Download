@@ -81,7 +81,10 @@ PROBE_MAX_BYTES = 4 * 1024 * 1024
 
 # Yakalama analizleri sınırlı sayıda işçiyle yürütülür. Her yakalama için ayrı
 # iş parçacığı açmak, yüzlerce yakalama biriktiğinde uygulamayı yoruyordu.
-PROBE_WORKERS = 2
+# Yakalanan videoların metadata'sını paralel çözümlemek için worker sayısı.
+# I/O ağırlıklı iş; orta seviye donanımda 4 makul bir denge (daha fazlası
+# tarayıcı köprüsünü ve diski gereksiz yere zorlar).
+PROBE_WORKERS = 4
 PROBE_MAX_AGE = 24 * 60 * 60
 
 # Geçici ağ hatalarında görev otomatik olarak yeniden kuyruğa alınır.
@@ -100,7 +103,9 @@ SAVED_LOG_LIMIT = 2000
 
 # snapshot() önbelleği süresi (saniye). Arayüz her 700 ms'de bir durumu
 # sorar; önbellekle tekrarlayan serileştirme engellenir.
-SNAPSHOT_CACHE_TTL = 0.3
+# UI anlık görüntü önbelleği: çok kısa TTL arayüzü akıcı tutar, çok uzun
+# TTL eski sayaçlar gösterir. 0.15s denge noktası.
+SNAPSHOT_CACHE_TTL = 0.15
 
 
 @dataclass

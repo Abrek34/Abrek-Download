@@ -554,7 +554,12 @@ class DirectDownloader:
             self._speed_time = now
         total = self.total
         percent = (downloaded / total * 100.0) if total > 0 else 0.0
-        eta = int((total - downloaded) / self._speed) if total > 0 and self._speed > 0 else 0
+        if total > 0 and self._speed > 0:
+            eta = int((total - downloaded) / self._speed)
+            # Aşırı büyük ETA değerleri arayüzü bozar; makul üst sınıra kırp.
+            eta = max(0, min(eta, 24 * 3600))
+        else:
+            eta = 0
         self._last_emit = now
         try:
             self.progress_cb(downloaded, total, percent, self._speed, eta)
