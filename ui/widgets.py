@@ -356,6 +356,9 @@ class TaskCard(tk.Frame):
         if status in {"queued", "starting", "analyzing", "downloading", "processing"}:
             actions.append((t("downloads.action.pause"), "pause", "ghost"))
             actions.append((t("downloads.action.cancel"), "cancel", "danger"))
+        if status == "queued":
+            actions.append((t("downloads.action.move_up"), "move_up", "ghost"))
+            actions.append((t("downloads.action.move_down"), "move_down", "ghost"))
         elif status in {"pausing", "canceling"}:
             label = t("task.action.pausing") if status == "pausing" else t("task.action.canceling")
             actions.append((label, "", "subtle"))
@@ -366,6 +369,7 @@ class TaskCard(tk.Frame):
             actions.append((t("downloads.action.retry"), "retry", "primary"))
             if has_error:
                 actions.append((t("downloads.action.details"), "details", "ghost"))
+                actions.append((t("downloads.action.diagnose"), "diagnose", "ghost"))
             actions.append((t("downloads.action.remove"), "remove", "ghost"))
         elif status == "completed":
             if has_file:
@@ -409,6 +413,12 @@ class TaskCard(tk.Frame):
             self.app.extract_audio(task_id)
         elif action == "details":
             self.app.show_task_details(task_id)
+        elif action == "diagnose":
+            self.app.diagnose_task(task_id)
+        elif action == "move_up":
+            self.app.move_task(task_id, -1)
+        elif action == "move_down":
+            self.app.move_task(task_id, 1)
 
     def _on_open_file(self, _event=None) -> None:
         if self.data.get("status") == "completed" and self.data.get("filepath"):

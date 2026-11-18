@@ -465,6 +465,27 @@ def is_transient_error(value: BaseException | str | None) -> bool:
     return is_transient(value)
 
 
+def diagnose_error(error: str, log_tail: str = "") -> str:
+    """Hata metnine göre kullanıcıya yönelik kısa bir öneri döner."""
+    text = (error or "").lower() + "\\n" + (log_tail or "").lower()
+    if "403" in text or "forbidden" in text:
+        return "Erişim reddedildi (403). Çerez/tarayıcı oturumu veya referer gerekli olabilir; ayarlardan çerez tarayıcısı seçin."
+    if "404" in text or "not found" in text:
+        return "Kaynak bulunamadı (404). Bağlantı süresi dolmuş olabilir; sayfayı yenileyip yeniden yakalayın."
+    if "429" in text or "too many" in text:
+        return "Çok fazla istek (429). Birkaç dakika bekleyip yeniden deneyin; eşzamanlılığı düşürün."
+    if "drm" in text or "encrypted" in text:
+        return "İçerik DRM ile korumalı; indirilemez."
+    if "disk" in text or "no space" in text or "enospc" in text:
+        return "Disk alanı yetersiz. İndirme klasörünü değiştirin veya yer açın."
+    if "ffmpeg" in text:
+        return "ffmpeg bulunamadı veya hata verdi. ffmpeg kurun: sudo pacman -S ffmpeg"
+    if "network" in text or "connection" in text or "timeout" in text:
+        return "Ağ/zaman aşımı. Bağlantıyı kontrol edin; uygulama otomatik yeniden deneyecek."
+    if "private" in text or "login" in text:
+        return "Video özel/oturum gerektiriyor. Çerez tarayıcısı ayarlayın."
+    return "Ayrıntılar için günlük kaydını inceleyin; 'Yeniden dene' ile tekrar deneyin."
+
 def file_size(path: str | Path | None) -> int:
     try:
         return os.path.getsize(path) if path else 0

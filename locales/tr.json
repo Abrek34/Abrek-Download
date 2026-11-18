@@ -322,5 +322,18 @@
   "settings.err.cookies_file": "Seçilen cookies.txt dosyası bulunamadı.",
   "settings.api_token": "Erişim tokeni",
   "settings.api_token_hint": "İsteğe bağlı. Yerel köprüye erişimi korumak için bir token girin. Aynı token'ı tarayıcı eklentisindeki 'Erişim tokeni zorunlu kıl' ayarıyla eşitleyin. En az 8 karakter önerilir.",
-  "settings.err.api_token_short": "Token en az 8 karakter olmalıdır."
+  "settings.err.api_token_short": "Token en az 8 karakter olmalıdır.",
+  "downloads.load_more": "Daha fazla yükle ({count} görev daha)",
+  "downloads.action.diagnose": "Teşhis",
+  "settings.speed_profile": "Hız profili",
+  "settings.speed_profile_hint": "Tek tıkla eşzamanlılık, bağlantı ve hız limitini ayarla.",
+  "settings.speed_profile.low": "Düşük bant",
+  "settings.speed_profile.balanced": "Dengeli",
+  "settings.speed_profile.max": "Maksimum",
+  "settings.speed_profile.applied": "Hız profili uygulandı.",
+  "downloads.action.move_up": "↑",
+  "downloads.action.move_down": "↓",
+  "downloads.sort.created": "Tarih",
+  "downloads.sort.size": "Boyut",
+  "downloads.sort.title": "Ad"
 }

@@ -42,6 +42,7 @@ from core.manager import DownloadManager
 from core.server import ApiServer
 from core.i18n import t
 from core.utils import (
+    diagnose_error,
     first_url_argument,
     human_speed,
     is_http_url,
@@ -835,11 +836,28 @@ class VideoAvciApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def move_task(self, task_id: str, direction: int) -> None:
+        if self.manager.move_task(task_id, direction):
+            self.refresh_now()
+
     def show_task_details(self, task_id: str) -> None:
         task = self.manager.get_task(task_id)
         if task is None:
             return
         show_details_dialog(self, task.snapshot())
+
+    def diagnose_task(self, task_id: str) -> None:
+        task = self.manager.get_task(task_id)
+        if task is None:
+            return
+        data = task.snapshot()
+        error = str(data.get("error") or "")
+        log_tail = str(data.get("log_tail") or "")
+        suggestion = diagnose_error(error, log_tail)
+        show_details_dialog(self, data)
+        # Teşhis önerisini toast ile de göster (pencere zaten açık).
+        if suggestion:
+            self.toast(suggestion, "info")
 
     # ------------------------------------------------------------------ yakalananlar
     def download_capture(self, capture_id: str) -> None:

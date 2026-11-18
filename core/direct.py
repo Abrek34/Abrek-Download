@@ -533,6 +533,15 @@ class DirectDownloader:
         with self._lock:
             self._downloaded += amount
 
+    def _adaptive_chunk_size(self) -> int:
+        """Mevcut hıza göre okuma parça boyutu."""
+        speed = getattr(self, "_speed", 0.0) or 0.0
+        if speed >= 5 * 1024 * 1024:
+            return 512 * 1024
+        if speed >= 1 * 1024 * 1024:
+            return 256 * 1024
+        return 128 * 1024
+
     def _adjust_bytes(self, amount: int) -> None:
         with self._lock:
             self._downloaded = max(0, self._downloaded + amount)
@@ -653,7 +662,7 @@ class DirectDownloader:
                             self._adjust_bytes(-existing)
                             existing = 0
                         with part.open(mode) as handle:
-                            for chunk in response.iter_content(chunk_size=128 * 1024):
+                            for chunk in response.iter_content(chunk_size=self._adaptive_chunk_size()):
                                 if self.should_stop():
                                     return
                                 if not chunk:
@@ -849,7 +858,7 @@ class DirectDownloader:
                         else:
                             mode = "ab" if existing > 0 else "wb"
                     with part.open(mode) as handle:
-                        for chunk in response.iter_content(chunk_size=128 * 1024):
+                        for chunk in response.iter_content(chunk_size=self._adaptive_chunk_size()):
                             if self.should_stop():
                                 return
                             if not chunk:

@@ -322,5 +322,18 @@
   "settings.err.cookies_file": "The selected cookies.txt file was not found.",
   "settings.api_token": "Access token",
   "settings.api_token_hint": "Optional. Enter a token to protect access to the local bridge. Match it with the 'Require access token' setting in the browser extension. At least 8 characters recommended.",
-  "settings.err.api_token_short": "Token must be at least 8 characters."
+  "settings.err.api_token_short": "Token must be at least 8 characters.",
+  "downloads.load_more": "Load more ({count} more tasks)",
+  "downloads.action.diagnose": "Diagnose",
+  "settings.speed_profile": "Speed profile",
+  "settings.speed_profile_hint": "Set concurrency, connections and speed limit in one click.",
+  "settings.speed_profile.low": "Low bandwidth",
+  "settings.speed_profile.balanced": "Balanced",
+  "settings.speed_profile.max": "Maximum",
+  "settings.speed_profile.applied": "Speed profile applied.",
+  "downloads.action.move_up": "↑",
+  "downloads.action.move_down": "↓",
+  "downloads.sort.created": "Date",
+  "downloads.sort.size": "Size",
+  "downloads.sort.title": "Name"
 }

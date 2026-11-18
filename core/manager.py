@@ -1291,6 +1291,64 @@ class DownloadManager:
             self.tasks = keep
             self._save_locked()
 
+    def move_task(self, task_id: str, direction: int) -> bool:
+        """Görevi kuyrukta yukarı (-1) veya aşağı (+1) taşır.
+
+        Yalnızca sıradaki (queued) görevler taşınabilir. Başarıda True döner.
+        """
+        with self.lock:
+            if task_id not in self.tasks:
+                return False
+            task = self.tasks[task_id]
+            if task.status != "queued":
+                return False
+            ids = list(self.tasks.keys())
+            idx = ids.index(task_id)
+            new_idx = idx + (1 if direction > 0 else -1)
+            if new_idx < 0 or new_idx >= len(ids):
+                return False
+            if self.tasks[ids[new_idx]].status != "queued":
+                return False
+            ordered = [(k, v) for k, v in self.tasks.items()]
+            ordered[idx], ordered[new_idx] = ordered[new_idx], ordered[idx]
+            self.tasks = {k: v for k, v in ordered}
+            self._dirty = True
+            self._snapshot_cache = None
+            self._save_locked(throttle=True)
+            return True
+
+    def sort_queue(self, key: str = "created") -> int:
+        """Kuyruktaki sıradaki görevleri belirtilen anahtara göre sıralar.
+
+        key: created | size | title. Döner: etkilenen görev sayısı.
+        """
+        with self.lock:
+            queued_ids = [tid for tid, tsk in self.tasks.items() if tsk.status == "queued"]
+            if len(queued_ids) < 2:
+                return 0
+
+            def sort_key(tid):
+                tsk = self.tasks[tid]
+                if key == "size":
+                    return (tsk.total or 0,)
+                if key == "title":
+                    return (tsk.display_title().lower(),)
+                return (tsk.created_at,)
+
+            ordered_queued = sorted(queued_ids, key=sort_key)
+            new_order: list[str] = []
+            q_iter = iter(ordered_queued)
+            for tid in self.tasks.keys():
+                if self.tasks[tid].status == "queued":
+                    new_order.append(next(q_iter))
+                else:
+                    new_order.append(tid)
+            self.tasks = {tid: self.tasks[tid] for tid in new_order}
+            self._dirty = True
+            self._snapshot_cache = None
+            self._save_locked(throttle=True)
+            return len(queued_ids)
+
     def clear_queue(self) -> int:
         """Tüm indirme görevlerini (aktif olanlar dahil) listeden kaldırır.
 

@@ -163,6 +163,24 @@ class SettingsPage(tk.Frame):
             t("settings.section.download_subtitle"),
         )
 
+        # Hız profili: tek tıkla eşzamanlılık/bağlantı/hız limiti.
+        profile_row = self._row(body, t("settings.speed_profile"), t("settings.speed_profile_hint"))
+        btns = tk.Frame(profile_row, bg=CARD)
+        btns.pack(side="right", padx=(16, 0))
+        for label, vals in (
+            (t("settings.speed_profile.low"), (1, 2, 256)),
+            (t("settings.speed_profile.balanced"), (2, 4, 0)),
+            (t("settings.speed_profile.max"), (4, 8, 0)),
+        ):
+            make_button(
+                btns,
+                label,
+                lambda v=vals: self._apply_speed_profile(*v),
+                kind="ghost",
+                size=8,
+                bg=CARD,
+            ).pack(side="left", padx=(0, 6))
+
         row = self._row(body, t("settings.download_folder"), t("settings.download_folder_hint"))
         controls = tk.Frame(row, bg=CARD)
         controls.pack(side="right", padx=(16, 0))
@@ -440,6 +458,13 @@ class SettingsPage(tk.Frame):
         ).pack(fill="x", pady=(10, 0))
 
     # ------------------------------------------------------------------ değerler
+    def _apply_speed_profile(self, concurrent: int, connections: int, speed_limit: int) -> None:
+        self.concurrent_combo.set(str(concurrent))
+        self.connections_combo.set(str(connections))
+        self.speed_entry.delete(0, "end")
+        self.speed_entry.insert(0, str(speed_limit))
+        self.app.toast(t("settings.speed_profile.applied"), "success")
+
     def load_values(self) -> None:
         config = self.app.cfg
         self.folder_entry.delete(0, "end")

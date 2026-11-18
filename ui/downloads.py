@@ -65,6 +65,8 @@ class DownloadsPage(tk.Frame):
         self._tasks: list[dict] = []
         self._search_query = ""
         self._checking_playlist = False
+        self._visible_limit = 80
+        self._shown_count = 0
         self._build()
 
     # ------------------------------------------------------------------ kurulum
@@ -199,6 +201,15 @@ class DownloadsPage(tk.Frame):
 
         actions = tk.Frame(bar, bg=BG)
         actions.pack(side="right")
+        self.sort_combo = ttk.Combobox(
+            actions,
+            state="readonly",
+            values=[t("downloads.sort.created"), t("downloads.sort.size"), t("downloads.sort.title")],
+            width=12,
+            font=font(8),
+        )
+        self.sort_combo.pack(side="left", padx=(0, 6), ipady=1)
+        self.sort_combo.bind("<<ComboboxSelected>>", self._on_sort_change)
         make_button(actions, t("downloads.pause_all"), self.pause_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
         make_button(actions, t("downloads.resume_all"), self.resume_all, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
         make_button(actions, t("downloads.retry_failed"), self.retry_failed, kind="ghost", size=8, bg=BG).pack(side="left", padx=(0, 6))
@@ -445,6 +456,10 @@ class DownloadsPage(tk.Frame):
                 self.app.toast(message, "warning")
         self.app.refresh_now()
 
+    def _load_more(self, filtered: list) -> None:
+        self._visible_limit += 80
+        self.update_tasks(filtered if False else self._tasks)
+
     def set_filter(self, key: str) -> None:
         if key == self._filter:
             return
@@ -517,6 +532,17 @@ class DownloadsPage(tk.Frame):
         self._search_query = self.search_entry.value().strip()
         self.update_tasks(self._tasks)
 
+    def _on_sort_change(self, _event=None) -> None:
+        label = self.sort_combo.get()
+        mapping = {
+            t("downloads.sort.created"): "created",
+            t("downloads.sort.size"): "size",
+            t("downloads.sort.title"): "title",
+        }
+        key = mapping.get(label, "created")
+        self.app.manager.sort_queue(key)
+        self.app.refresh_now()
+
     # ------------------------------------------------------------------ güncelle
     def update_snapshot(self, snapshot: dict) -> None:
         self._tasks = list(snapshot.get("tasks") or [])
@@ -563,7 +589,10 @@ class DownloadsPage(tk.Frame):
             if task_id not in desired:
                 self.cards.pop(task_id).destroy()
 
-        for task in filtered:
+        visible = filtered[:self._visible_limit]
+        desired = tuple(str(t_item.get("id")) for t_item in visible)
+
+        for task in visible:
             task_id = str(task.get("id"))
             card = self.cards.get(task_id)
             if card is None:
@@ -572,12 +601,29 @@ class DownloadsPage(tk.Frame):
             else:
                 card.update_data(task)
 
+        # Görünmeyen kartları temizle.
+        visible_ids = set(desired)
+        for task_id in list(self.cards):
+            if task_id not in visible_ids:
+                self.cards.pop(task_id).destroy()
+
         if desired != self._order:
             for task_id in desired:
                 self.cards[task_id].pack_forget()
             for task_id in desired:
                 self.cards[task_id].pack(fill="x", pady=(0, 10))
             self._order = desired
+
+        # "Daha fazla yükle" düğmesi.
+        if not hasattr(self, "_load_more_btn") or self._load_more_btn is None or not self._load_more_btn.winfo_exists():
+            self._load_more_btn = make_button(self.scroll.inner, "", lambda: self._load_more(filtered), kind="ghost", size=9, bg=BG)
+        if len(filtered) > self._visible_limit:
+            self._load_more_btn.configure(text=t("downloads.load_more", count=len(filtered) - self._visible_limit))
+            if not self._load_more_btn.winfo_manager():
+                self._load_more_btn.pack(fill="x", pady=(0, 10))
+        else:
+            if self._load_more_btn.winfo_manager():
+                self._load_more_btn.pack_forget()
 
         if filtered:
             self.empty.pack_forget()
